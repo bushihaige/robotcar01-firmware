@@ -9,8 +9,9 @@ project(robotcar01 LANGUAGES CXX)
 #           默认 OFF，通过 ROBOTCAR01_BUILD_FW=ON + 工具链文件启用）。
 #
 # 平台无关业务（app/chassis/ 等）以静态库 robotcar01_chassis 编入 host；
+# MCU OS Lite 核心（app/mcu_os_lite/）以静态库 robotcar01_mcu_os_lite 编入 host；
 # fw 分支共享同一源列表的机制由 Iteration 002.5 决定（D-001-3），
-# 001 不引入未验证的交叉构建改动。
+# 001/002 不引入未验证的交叉构建改动。
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -34,6 +35,16 @@ else()
   )
   target_include_directories(robotcar01_chassis PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_compile_options(robotcar01_chassis PRIVATE -Wall -Wextra -Werror)
+
+  # --- MCU OS Lite 核心库（002；源列表变量供 fw 分支复用，D-001-3 机制预留） ---
+  set(ROBOTCAR01_MCU_OS_LITE_SOURCES
+    app/mcu_os_lite/task_descriptor.cc
+    app/mcu_os_lite/scheduler.cc
+    app/mcu_os_lite/health_monitor.cc
+  )
+  add_library(robotcar01_mcu_os_lite STATIC ${ROBOTCAR01_MCU_OS_LITE_SOURCES})
+  target_include_directories(robotcar01_mcu_os_lite PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+  target_compile_options(robotcar01_mcu_os_lite PRIVATE -Wall -Wextra -Werror)
 
   # --- host 单元测试 target ---
   enable_testing()

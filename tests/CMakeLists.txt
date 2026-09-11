@@ -5,12 +5,15 @@ add_executable(robotcar01_tests
   kinematics_test.cc
   safety_gate_test.cc
   walking_skeleton_test.cc
+  scheduler_test.cc
+  health_monitor_test.cc
 )
 
 target_compile_options(robotcar01_tests PRIVATE -Wall -Wextra -Werror)
 target_link_libraries(robotcar01_tests PRIVATE
   GTest::gtest_main GTest::gtest
   robotcar01_chassis
+  robotcar01_mcu_os_lite
 )
 target_include_directories(robotcar01_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../host_fakes)
 
