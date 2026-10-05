@@ -11,12 +11,27 @@
         "CMAKE_PREFIX_PATH": "/opt/homebrew",
         "CMAKE_BUILD_TYPE": "Debug"
       }
+    },
+    {
+      "name": "fw",
+      "displayName": "STM32F407ZGT6 firmware (arm-none-eabi-gcc, Iteration 002.5)",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build/fw",
+      "toolchainFile": "${sourceDir}/cmake/arm-none-eabi.cmake",
+      "cacheVariables": {
+        "ROBOTCAR01_BUILD_FW": "ON",
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
     }
   ],
   "buildPresets": [
     {
       "name": "host",
       "configurePreset": "host"
+    },
+    {
+      "name": "fw",
+      "configurePreset": "fw"
     }
   ],
   "testPresets": [

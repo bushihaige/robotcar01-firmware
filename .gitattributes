@@ -1,0 +1,37 @@
+# 行尾与文本属性策略（Iteration 002.5，评审 H-1）
+#
+# 核心约束：third_party/ 是只读 vendor 区（INV-2.5-2）。若对其做行尾规范化，
+# 每次 checkout 都会重写文件内容，破坏"原样 vendor + sha256 自证"的前提；
+# 且 startup_stm32f407xx.s 在 Windows 上带 CRLF 会导致 GNU as 报 bad instruction 类错误。
+# 因此 vendor 明确 -text（禁止任何转换），脚本按平台固定行尾。
+
+# --- vendor：禁止行尾转换（保持原始字节，配合 third_party/README.md 的 sha256 清单） ---
+third_party/** -text
+
+# --- 脚本行尾 ---
+*.sh   text eol=lf
+*.bash text eol=lf
+*.py   text eol=lf
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+
+# --- 源码/构建/文档：交给 git 自动判定 ---
+*.c    text
+*.h    text
+*.cc   text
+*.cpp  text
+*.s    text
+*.ld   text
+*.md   text
+*.json text
+*.jsonl text
+*.cmake text
+CMakeLists.txt text
+
+# --- 二进制/产物：不做文本处理 ---
+*.hex  binary
+*.bin  binary
+*.elf  binary
+*.o    binary
+*.a    binary
+*.map  -text

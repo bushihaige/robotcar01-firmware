@@ -7,7 +7,7 @@
 | cmake ≥ 3.24 | 构建 | brew 已装 |
 | AppleClang / clang++ | host 单测编译 | CommandLineTools 自带 |
 | GoogleTest | 单元测试框架 | brew 已装（googletest） |
-| arm-none-eabi-gcc | 固件交叉编译 | **延后至 Iteration 008**（002.5 决策） |
+| arm-none-eabi-gcc | 固件交叉编译 | **Iteration 002.5 起启用**；Mac 侧已装（brew，用于交叉编译预检）；烧录在 Windows 侧（ST-Link） |
 
 ## 命令行入口（全部不依赖 IDE）
 
@@ -22,16 +22,17 @@ cmake --build --preset host
 ctest --preset host
 ```
 
-预期：全部用例通过，退出码 0（当前 43 个用例，含 000 smoke 回归与 001 的 22 例）。
+预期：全部用例通过，退出码 0（当前 **44** 个用例：000 smoke 1 + 001 的 22 + 002 的 22，其中 scheduler 10 / health_monitor 12）。
 
-## 固件 target（预留，暂不构建）
+## 固件 target（Iteration 002.5 起启用）
 
-交叉 target `robotcar01_fw` 默认 OFF。待 Iteration 002.5/008 安装
-`arm-none-eabi-gcc` 并接入 CubeMX/HAL 生成代码后启用：
+交叉 target `robotcar01_fw` 默认 OFF。002.5 起启用：HAL/CMSIS 以 **vendor 源码**引入
+（不使用 CubeMX 生成物），fw 入口为 `platform_stm32/main_stm32.cc`。命令以 CMake preset 固化
+（`cmake --preset fw && cmake --build --preset fw`，见 `CMakePresets.json`）；等价的手工命令为：
 
 ```bash
 cmake -S . -B build/fw -DROBOTCAR01_BUILD_FW=ON \
-  -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake
+  -DCMAKE_TOOLCHAIN_FILE="$PWD/cmake/arm-none-eabi.cmake"
 cmake --build build/fw
 ```
 

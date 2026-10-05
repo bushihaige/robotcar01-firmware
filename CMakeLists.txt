@@ -1,17 +1,21 @@
 cmake_minimum_required(VERSION 3.24)
-project(robotcar01 LANGUAGES CXX)
+project(robotcar01 LANGUAGES C CXX ASM)
 
 # RobotCar01 底盘固件
 #
 # 双 target 策略：
 #   - host：本机 AppleClang + GoogleTest，用于单元测试（默认构建）；
-#   - fw  ：arm-none-eabi-gcc 交叉编译，产出固件（工具链延后至 Iteration 008，
-#           默认 OFF，通过 ROBOTCAR01_BUILD_FW=ON + 工具链文件启用）。
+#   - fw  ：arm-none-eabi-gcc 交叉编译，产出固件（**Iteration 002.5 起启用**：
+#           默认 OFF，通过 ROBOTCAR01_BUILD_FW=ON + preset `fw` 或工具链文件启用）。
 #
 # 平台无关业务（app/chassis/ 等）以静态库 robotcar01_chassis 编入 host；
 # MCU OS Lite 核心（app/mcu_os_lite/）以静态库 robotcar01_mcu_os_lite 编入 host；
-# fw 分支共享同一源列表的机制由 Iteration 002.5 决定（D-001-3），
-# 001/002 不引入未验证的交叉构建改动。
+# fw 分支的源列表与 vendor（HAL/CMSIS）引入方式由 Iteration 002.5 落地
+# （D-001-3 → B-2.5-x）：fw 编 platform_stm32/ + third_party/，入口为
+# platform_stm32/main_stm32.cc，**不使用 CubeMX 生成物**。
+#
+# 评审 C-1：语言必须含 C（HAL 是 C 源）与 ASM（startup_stm32f407xx.s），
+# 否则 CMake 报 "Cannot determine link language for target"。
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -19,15 +23,62 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(ROBOTCAR01_BUILD_FW "Build firmware cross target (needs arm-none-eabi-gcc)" OFF)
 
+set(ROBOTCAR01_VENDOR_DIR ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
+
 if(ROBOTCAR01_BUILD_FW)
-  # --- 固件 target（预留；Iteration 008 接入 CubeMX/HAL 后扩展） ---
-  add_executable(robotcar01_fw
-    app/main.cc
+  # --- vendor 库：HAL/CMSIS（只读、不参与 -Werror，评审 H-4/S-6） ---
+  set(ROBOTCAR01_HAL_SOURCES
+    ${ROBOTCAR01_VENDOR_DIR}/stm32f4-hal/Src/stm32f4xx_hal.c
+    ${ROBOTCAR01_VENDOR_DIR}/stm32f4-hal/Src/stm32f4xx_hal_cortex.c
+    ${ROBOTCAR01_VENDOR_DIR}/stm32f4-hal/Src/stm32f4xx_hal_rcc.c
+    ${ROBOTCAR01_VENDOR_DIR}/stm32f4-hal/Src/stm32f4xx_hal_rcc_ex.c
+    ${ROBOTCAR01_VENDOR_DIR}/stm32f4-hal/Src/stm32f4xx_hal_gpio.c
+    ${ROBOTCAR01_VENDOR_DIR}/stm32f4-hal/Src/stm32f4xx_hal_uart.c
+    ${ROBOTCAR01_VENDOR_DIR}/stm32f4-hal/Src/stm32f4xx_hal_dma.c
+    ${ROBOTCAR01_VENDOR_DIR}/stm32f4-hal/Src/stm32f4xx_hal_dma_ex.c
+    ${ROBOTCAR01_VENDOR_DIR}/stm32f4-hal/Src/stm32f4xx_hal_pwr.c
+    ${ROBOTCAR01_VENDOR_DIR}/stm32f4-hal/Src/stm32f4xx_hal_pwr_ex.c
+    ${ROBOTCAR01_VENDOR_DIR}/stm32f4-hal/Src/stm32f4xx_hal_exti.c
+    ${ROBOTCAR01_VENDOR_DIR}/stm32f4-hal/Src/stm32f4xx_hal_flash.c
+    ${ROBOTCAR01_VENDOR_DIR}/stm32f4-hal/Src/stm32f4xx_hal_flash_ex.c
+    ${ROBOTCAR01_VENDOR_DIR}/stm32f4-hal/Src/stm32f4xx_hal_flash_ramfunc.c
+    ${ROBOTCAR01_VENDOR_DIR}/cmsis-device-f4/Source/Templates/system_stm32f4xx.c
   )
-  target_compile_definitions(robotcar01_fw PRIVATE STM32F407xx)
-  target_compile_options(robotcar01_fw PRIVATE -Wall -Wextra)
+  add_library(robotcar01_hal STATIC ${ROBOTCAR01_HAL_SOURCES})
+  target_include_directories(robotcar01_hal SYSTEM PUBLIC
+    ${ROBOTCAR01_VENDOR_DIR}/stm32f4-hal/Inc
+    ${ROBOTCAR01_VENDOR_DIR}/cmsis-device-f4/Include
+    ${ROBOTCAR01_VENDOR_DIR}/cmsis-core/Include
+  )
+  target_include_directories(robotcar01_hal PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/platform_stm32/inc)
+  target_compile_definitions(robotcar01_hal PUBLIC STM32F407xx USE_HAL_DRIVER)
+  target_compile_options(robotcar01_hal PRIVATE -w)  # vendor 不参与告警/错误门禁
+
+  # --- 固件 target（Iteration 002.5：最小编译单元，不含调度器与业务） ---
+  add_executable(robotcar01_fw
+    platform_stm32/main_stm32.cc
+    platform_stm32/clock_init.cc
+    platform_stm32/uart_console.cc
+    platform_stm32/diag.cc
+    ${ROBOTCAR01_VENDOR_DIR}/cmsis-device-f4/Source/Templates/gcc/startup_stm32f407xx.s
+  )
+  target_include_directories(robotcar01_fw PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/platform_stm32/inc
+    ${CMAKE_CURRENT_SOURCE_DIR}
+  )
+  target_compile_definitions(robotcar01_fw PRIVATE STM32F407xx USE_HAL_DRIVER)
+  target_compile_options(robotcar01_fw PRIVATE -Wall -Wextra -Werror)
+  target_link_libraries(robotcar01_fw PRIVATE robotcar01_hal)
+
+  # 产物：ELF + HEX（供 ST-Link 烧录）+ BIN + size 报告
+  add_custom_command(TARGET robotcar01_fw POST_BUILD
+    COMMAND ${CMAKE_OBJCOPY} -O ihex $<TARGET_FILE:robotcar01_fw> ${CMAKE_BINARY_DIR}/robotcar01_fw.hex
+    COMMAND ${CMAKE_OBJCOPY} -O binary $<TARGET_FILE:robotcar01_fw> ${CMAKE_BINARY_DIR}/robotcar01_fw.bin
+    COMMAND ${CMAKE_SIZE} $<TARGET_FILE:robotcar01_fw>
+    COMMENT "Generating robotcar01_fw.hex/.bin and size report"
+  )
 else()
-  # --- 平台无关业务库（host 编译，供单测链接；fw 分支源共享待 002.5） ---
+  # --- 平台无关业务库（host 编译，供单测链接；fw 复用机制见 002.5） ---
   add_library(robotcar01_chassis STATIC
     app/chassis/kinematics.cc
     app/chassis/safety_gate.cc
