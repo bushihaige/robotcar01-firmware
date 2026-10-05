@@ -28,7 +28,7 @@ curl -sSLf "https://raw.githubusercontent.com/STMicroelectronics/stm32f4xx-hal-d
 
 ## 体积
 
-约 2.9 MB（44 个文件），可直接入库，不使用 submodule（Windows 侧无需额外配置）。
+约 3.1 MB（45 个文件），可直接入库，不使用 submodule（Windows 侧无需额外配置）。
 
 ## 非 vendor 文件（本项目自写，不属本目录）
 
@@ -51,6 +51,7 @@ curl -sSLf "https://raw.githubusercontent.com/STMicroelectronics/stm32f4xx-hal-d
 | `cmsis-device-f4/LICENSE.md` | `dadb755f51d36614173b28c5790cb4a991e8f4cc822e5b634fd66a4f4145824d` |
 | `cmsis-device-f4/Source/Templates/gcc/startup_stm32f407xx.s` | `430f14fd00db0f7aa88f354aee54064efb582ddc4cc264fb8e435dc7d7a2f53d` |
 | `cmsis-device-f4/Source/Templates/system_stm32f4xx.c` | `2207561f907415c4bd91d640755679f8d2feb9b609bd0a6d521e6e76ee463b85` |
+| `stm32f4-hal/Inc/Legacy/stm32_hal_legacy.h` | `8c2d2feb90e8ed88fe5756f3f1616a2b67aa1cd0858da8b130ed69607688c8c0` |
 | `stm32f4-hal/Inc/stm32f4xx_hal.h` | `6942f40453fee331e026179cfac4c0f24ffe6313fedcb68af9c3382f702dbaf5` |
 | `stm32f4-hal/Inc/stm32f4xx_hal_conf_template.h` | `fea2676745945e8cf5ded3e1ea32000c68c5a3e33018578703024964336ca243` |
 | `stm32f4-hal/Inc/stm32f4xx_hal_cortex.h` | `d96dba22903abda49d66cad29ac0c49357e6a27cf9cb03dfd8c6db71b61a7fca` |
