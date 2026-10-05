@@ -4,8 +4,8 @@
 // 输出（stdout）：反馈帧二进制流（外层帧格式与命令帧一致：magic/version/type/len/seq/CRC）。
 // 诊断（stderr）：每行处理后的可解析统计行（key=value），以及汇总行。
 //
-// 确定性契约（评审 H11）：默认使用**内部虚拟时钟**（每处理一行推进 1 ms），因此输出帧数
-// 只由输入行数决定，不依赖墙钟、不随机器负载变化。`--realtime` 才使用真实时钟。
+// 确定性契约（评审 H11）：使用**内部虚拟时钟**（每处理一行推进 1 ms），因此输出帧数只由输入
+// 行数决定，不依赖墙钟、不随机器负载变化。工具不提供墙钟模式：真机联调由 008 的 USB 接线条承担。
 //
 // 边界声明：本工具是 host 证据，**不是** USB 真机链路证据（USB CDC 接线属 Iteration 008）。
 
@@ -85,7 +85,6 @@ void WriteFrames(const uint8_t* data, size_t size) {
 
 int main(int argc, char** argv) {
   Options options{};
-  bool realtime = false;
   for (int i = 1; i < argc; ++i) {
     const std::string arg = argv[i];
     const bool has_next = (i + 1) < argc;
@@ -97,12 +96,10 @@ int main(int argc, char** argv) {
       options.diag_period_ms = static_cast<uint32_t>(std::strtoul(argv[++i], nullptr, 10));
     } else if (arg == "--lease-ms" && has_next) {
       options.lease_ms = static_cast<uint32_t>(std::strtoul(argv[++i], nullptr, 10));
-    } else if (arg == "--realtime") {
-      realtime = true;
     } else if (arg == "--help" || arg == "-h") {
       std::fprintf(stderr,
                    "usage: robotcar01_loopback [--frames N] [--status-period-ms X] "
-                   "[--diag-period-ms Y] [--lease-ms Z] [--realtime]\n"
+                   "[--diag-period-ms Y] [--lease-ms Z]\n"
                    "stdin: one hex-encoded command frame per line\n"
                    "stdout: binary feedback frames\n");
       return 0;
@@ -127,7 +124,6 @@ int main(int argc, char** argv) {
   rate.status_period_ms = options.status_period_ms;
   rate.diag_period_ms = options.diag_period_ms;
   limiter.Init(rate, 0);
-  (void)realtime;  // 保留：真机/交互调试可由调用方切换时钟源（D-003-9 注入点）
 
   uint64_t now_us = 0;
   uint32_t feedback_seq = 0;

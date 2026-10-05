@@ -68,8 +68,8 @@ printf '524330310101000d01000000cdcc4c3e0000000000002c0100<b5><a6>\n' | \
 python3 scripts/check_feedback_stream.py ./build/host/tools/robotcar01_loopback
 ```
 
-工具默认使用**内部虚拟时钟**（每行输入推进 1 ms），因此输出帧数只由输入行数决定，不依赖墙钟；
-`--realtime` 才使用真实时钟。工具是 host 证据，**不是** USB 真机链路证据（USB CDC 接线属 008）。
+工具使用**内部虚拟时钟**（每行输入推进 1 ms），输出帧数只由输入行数决定，不依赖墙钟、不随机器负载变化；
+不提供墙钟模式（真机联调由 008 的 USB 接线条承担）。工具是 host 证据，**不是** USB 真机链路证据。
 
 ## 分支与 PR 流程（GitHub stacked PR，自 Iteration 002.5 起）
 

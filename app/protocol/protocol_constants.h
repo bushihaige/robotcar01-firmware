@@ -25,7 +25,7 @@ inline constexpr uint8_t kMagicByte3 = 0x31;  // '1'
 
 inline constexpr size_t kFrameHeaderBytes = 12;         // magic4 + ver1 + type1 + flags1 + len1 + seq4
 inline constexpr size_t kCrcBytes = 2;
-inline constexpr size_t kMaxCommandPayloadBytes = 32;   // 命令帧载荷上限（运动 12 / 停止 0）
+inline constexpr size_t kMaxCommandPayloadBytes = 32;   // 命令帧载荷上限（只作装配期静态上界，不参与校验）
 inline constexpr size_t kMaxFeedbackPayloadBytes = 200;  // 反馈帧载荷上限（状态 64 / 诊断 200）
 inline constexpr size_t kMaxPayloadBytes = 200;         // 通用上限：长度攻击在该值前拒绝
 inline constexpr size_t kMaxFrameBytes = 216;           // 12 + 200 + 2 + 2 余量
@@ -60,6 +60,18 @@ constexpr bool IsKnownMessageType(uint8_t raw) {
          raw == static_cast<uint8_t>(MessageType::kFeedbackStatus) ||
          raw == static_cast<uint8_t>(MessageType::kFeedbackDiag);
 }
+
+// 装配期静态断言：命令载荷的实际长度必须落在声明的上界内（校验逻辑用 RequiredPayloadBytes）。
+static_assert(kMotionPayloadBytes <= kMaxCommandPayloadBytes,
+              "motion payload exceeds declared command payload bound");
+static_assert(kStopPayloadBytes <= kMaxCommandPayloadBytes,
+              "stop payload exceeds declared command payload bound");
+static_assert(kDiagPayloadBytes <= kMaxFeedbackPayloadBytes,
+              "diag payload exceeds declared feedback payload bound");
+static_assert(kStatusPayloadBytes <= kMaxFeedbackPayloadBytes,
+              "status payload exceeds declared feedback payload bound");
+static_assert(kMaxFeedbackPayloadBytes + kFrameHeaderBytes + kCrcBytes <= kMaxFrameBytes,
+              "max frame constant is smaller than the largest well-formed frame");
 
 // 类型要求的载荷长度（-1 表示未知类型）。长度不匹配按 kRejectedLength 拒绝。
 constexpr int RequiredPayloadBytes(uint8_t raw) {
