@@ -17,6 +17,8 @@
 #include <string>
 #include <vector>
 
+#include "app/encoder/encoder_config.h"
+#include "app/encoder/encoder_estimator.h"
 #include "app/protocol/byte_ring.h"
 #include "app/protocol/command_manager.h"
 #include "app/protocol/decoder.h"
@@ -29,6 +31,9 @@ namespace {
 
 using robotcar01::protocol::AssembleDiagPayload;
 using robotcar01::protocol::AssembleStatusPayload;
+using robotcar01::encoder::EncoderConfig;
+using robotcar01::encoder::EncoderEstimator;
+using robotcar01::encoder::EncoderSnapshot;
 using robotcar01::protocol::ByteRing;
 using robotcar01::protocol::CommandLeaseConfig;
 using robotcar01::protocol::CommandLimits;
@@ -45,6 +50,9 @@ using robotcar01::protocol::StreamDecoder;
 
 struct Options {
   uint32_t frames = 0;  // 0 = 读到 EOF
+  float encoder_left_mps = 0.0f;   // 注入的虚拟左轮速（0 = 不注入编码器样本）
+  float encoder_right_mps = 0.0f;
+  bool encoder_enabled = false;
   uint32_t status_period_ms = 20;
   uint32_t diag_period_ms = 100;
   uint32_t lease_ms = 300;
@@ -97,10 +105,17 @@ int main(int argc, char** argv) {
       options.diag_period_ms = static_cast<uint32_t>(std::strtoul(argv[++i], nullptr, 10));
     } else if (arg == "--lease-ms" && has_next) {
       options.lease_ms = static_cast<uint32_t>(std::strtoul(argv[++i], nullptr, 10));
+    } else if (arg == "--encoder-left-mps" && has_next) {
+      options.encoder_left_mps = std::strtof(argv[++i], nullptr);
+      options.encoder_enabled = true;
+    } else if (arg == "--encoder-right-mps" && has_next) {
+      options.encoder_right_mps = std::strtof(argv[++i], nullptr);
+      options.encoder_enabled = true;
     } else if (arg == "--help" || arg == "-h") {
       std::fprintf(stderr,
                    "usage: robotcar01_loopback [--frames N] [--status-period-ms X] "
-                   "[--diag-period-ms Y] [--lease-ms Z]\n"
+                   "[--diag-period-ms Y] [--lease-ms Z] "
+                   "[--encoder-left-mps A] [--encoder-right-mps B]\n"
                    "stdin: one hex-encoded command frame per line\n"
                    "stdout: binary feedback frames\n");
       return 0;
@@ -126,11 +141,31 @@ int main(int argc, char** argv) {
   rate.diag_period_ms = options.diag_period_ms;
   limiter.Init(rate, 0);
 
+  // 编码器注入（004）：按注入轮速生成计数快照并驱动 EncoderEstimator
+  EncoderEstimator estimator;
+  EncoderConfig encoder_config{};
+  bool encoder_ready = false;
+  if (options.encoder_enabled) {
+    encoder_config.counts_per_encoder_rev = 44.0f;
+    encoder_config.gear_ratio = 90.0f;
+    encoder_config.wheel_radius_m = 0.05f;
+    encoder_config.low_speed_zero_threshold_mps = 0.05f;
+    encoder_config.max_estimation_delay_us = 20000;
+    encoder_config.stall_windows_threshold = 8;
+    encoder_config.low_speed_accumulate_counts = 5;
+    encoder_config.max_wheel_speed_mps = 0.5f;
+    encoder_ready = estimator.Init(encoder_config);
+  }
+  uint32_t encoder_left_count = 0;
+  uint32_t encoder_right_count = 0;
+  uint64_t encoder_now_us = 0;  // 编码器窗口独立时基（每行 = 5 ms 窗口，确定性）
+
   uint64_t now_us = 0;
   uint32_t feedback_seq = 0;
   uint32_t lines = 0;
   uint32_t frames_processed = 0;
   uint8_t feedback_buffer[robotcar01::protocol::kMaxFrameBytes] = {};
+  robotcar01::encoder::WheelState cached_wheel_state{};
 
   std::string line;
   while (std::getline(std::cin, line)) {
@@ -154,10 +189,36 @@ int main(int argc, char** argv) {
       }
     }
 
+    // 编码器注入：每行推进一个 5 ms 窗口（确定性）
+    if (encoder_ready) {
+      const uint32_t dt_us = 5000;
+      const float per_count = robotcar01::encoder::PerCountDistanceMeters(encoder_config);
+      if (per_count > 0.0f) {
+        const float dl = options.encoder_left_mps * (static_cast<float>(dt_us) / 1'000'000.0f) / per_count;
+        const float dr = options.encoder_right_mps * (static_cast<float>(dt_us) / 1'000'000.0f) / per_count;
+        encoder_left_count = static_cast<uint32_t>(
+            static_cast<int64_t>(encoder_left_count) + static_cast<int64_t>(dl >= 0 ? dl + 0.5f : dl - 0.5f));
+        encoder_right_count = static_cast<uint32_t>(
+            static_cast<int64_t>(encoder_right_count) + static_cast<int64_t>(dr >= 0 ? dr + 0.5f : dr - 0.5f));
+      }
+      EncoderSnapshot encoder_snapshot{};
+      encoder_snapshot.left.count = encoder_left_count;
+      encoder_snapshot.right.count = encoder_right_count;
+      encoder_now_us += dt_us;
+      encoder_snapshot.timestamp = robotcar01::mcu_os_lite::TimePoint{encoder_now_us};
+      encoder_snapshot.valid = true;
+      estimator.OnSample(encoder_snapshot, false);
+    }
+
     // 反馈发送（限频由 FeedbackLimiter 决定；失败只计数，不影响命令路径）
     FeedbackInputs inputs{};
     const CommandSnapshot snapshot = manager.snapshot();  // 按值持有，避免悬垂引用
     inputs.command = &snapshot;
+    if (encoder_ready) {
+      const auto wheel_state = estimator.state();
+      cached_wheel_state = wheel_state;
+      inputs.wheel_state = &cached_wheel_state;
+    }
     if (limiter.ShouldSendStatus(now_us)) {
       const auto payload = AssembleStatusPayload(inputs, now_us);
       const size_t size = EncodeStatusFrame(payload, feedback_seq++, feedback_buffer,
@@ -171,7 +232,8 @@ int main(int argc, char** argv) {
     if (limiter.ShouldSendDiag(now_us)) {
       // limits_config_valid=false：本工具不注入应用配置限值（008 装配时必须传 true）
       const auto payload = AssembleDiagPayload(nullptr, stats, manager.stats(), ring.statistics(),
-                                              /*limits_config_valid=*/false, now_us / 1000);
+                                              /*limits_config_valid=*/false,
+                                              /*encoder_stats=*/nullptr, now_us / 1000);
       const size_t size =
           EncodeDiagFrame(payload, feedback_seq++, feedback_buffer, sizeof(feedback_buffer));
       if (size == 0) {
@@ -193,6 +255,13 @@ int main(int argc, char** argv) {
                  manager.stats().suspended_rejected, manager.stats().run_requests_ignored,
                  manager.snapshot().armed ? 1u : 0u, manager.snapshot().run_requested ? 1u : 0u,
                  ring.statistics().overflow_drop_bytes);
+    if (encoder_ready) {
+      const auto wheel = estimator.state();
+      std::fprintf(stderr, "encoder left_mps=%.4f right_mps=%.4f left_valid=%u right_valid=%u "
+                           "left_quality=0x%x accepted=%u\n",
+                   wheel.left.speed_mps, wheel.right.speed_mps, wheel.left.valid ? 1u : 0u,
+                   wheel.right.valid ? 1u : 0u, wheel.left.quality, estimator.stats().samples_accepted);
+    }
     std::fflush(stdout);
     std::fflush(stderr);
 

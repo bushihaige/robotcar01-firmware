@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import struct
 import subprocess
 import sys
 
@@ -16,8 +17,8 @@ MAGIC = bytes([0x52, 0x43, 0x30, 0x31])
 VERSION = 0x01
 HEADER_BYTES = 12
 CRC_BYTES = 2
-MAX_FRAME_BYTES = 192
-REQUIRED_PAYLOAD = {0x01: 13, 0x02: 0, 0x81: 64, 0x82: 176}
+MAX_FRAME_BYTES = 208
+REQUIRED_PAYLOAD = {0x01: 13, 0x02: 0, 0x81: 64, 0x82: 192}
 
 
 def crc16_ccitt_false(data: bytes) -> int:
@@ -97,9 +98,13 @@ def main() -> int:
         good.hex(),
         run_frame.hex() + stop.hex(),  # 同一行粘连两帧（A1 粘包）
     ]
+    # 004：追加若干空行以推进编码器窗口（每行 = 1 个 5 ms 窗口，确定性）
+    lines.extend(["00"] * 40)
     stdin = "\n".join(lines) + "\n"
 
-    completed = subprocess.run([binary, "--frames", "20"], input=stdin.encode(),
+    completed = subprocess.run([binary, "--frames", "40", "--encoder-left-mps", "0.4",
+                                "--encoder-right-mps", "-0.3"],
+                               input=stdin.encode(),
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
     if completed.returncode != 0:
         print(f"FAIL: exit code {completed.returncode}", file=sys.stderr)
@@ -140,6 +145,31 @@ def main() -> int:
         return 1
     if fields.get("run_requested") != "0":
         print(f"FAIL: expected run_requested=0 after stop frame, got {last}", file=sys.stderr)
+        return 1
+
+    # A7（004）：状态帧 measured_* 与注入的编码器轮速一致，且速度有效位置位
+    status_frames = [f for f in frames if f[5] == 0x81]
+    measured = None
+    for frame in status_frames:
+        payload = frame[12:12 + 64]
+        flags = int.from_bytes(payload[0:4], "little")
+        flags_valid = int.from_bytes(payload[8:12], "little")
+        if flags & (1 << 7):  # kFlagSpeedValid
+            measured = (struct.unpack("<f", payload[44:48])[0], struct.unpack("<f", payload[48:52])[0],
+                        flags_valid & (1 << 7))
+            break
+    if measured is None:
+        print("FAIL: no status frame carried kFlagSpeedValid (004 encoder integration)",
+              file=sys.stderr)
+        return 1
+    left_mps, right_mps, _ = measured
+    if abs(left_mps - 0.4) > 0.03 or abs(right_mps + 0.3) > 0.03:
+        print(f"FAIL: measured speeds {left_mps:.4f}/{right_mps:.4f} != injected 0.4/-0.3",
+              file=sys.stderr)
+        return 1
+    encoder_lines = [line for line in stderr_text.splitlines() if line.startswith("encoder ")]
+    if not encoder_lines:
+        print("FAIL: no encoder statistics line on stderr", file=sys.stderr)
         return 1
 
     print(f"PASS: {len(frames)} feedback frames verified "

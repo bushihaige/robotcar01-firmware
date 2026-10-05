@@ -47,7 +47,7 @@ offset 0   magic 'R''C''0''1'（逐字节比较，禁止对整数常量 memcmp�
 offset 4   version = 1
 offset 5   msg_type: 0x01 Motion | 0x02 Stop | 0x81 FeedbackStatus | 0x82 FeedbackDiag
 offset 6   flags（保留，必须为 0；非 0 按 kRejectedFlag 拒绝）
-offset 7   payload_len（Motion=13, Stop=0, Status=64, Diag=200）
+offset 7   payload_len（Motion=13, Stop=0, Status=64, Diag=192；最大帧 208 B）
 offset 8   seq（uint32 LE；会话内必须严格递增，半程规则见详设）
 offset 12  payload
 ...        crc16 = CRC-16/CCITT-FALSE(poly 0x1021, init 0xFFFF, 不反射, 无末异或)，uint32 LE 线序

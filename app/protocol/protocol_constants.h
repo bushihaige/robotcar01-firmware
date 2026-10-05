@@ -26,14 +26,14 @@ inline constexpr uint8_t kMagicByte3 = 0x31;  // '1'
 inline constexpr size_t kFrameHeaderBytes = 12;         // magic4 + ver1 + type1 + flags1 + len1 + seq4
 inline constexpr size_t kCrcBytes = 2;
 inline constexpr size_t kMaxCommandPayloadBytes = 32;   // 命令帧载荷上限（只作装配期静态上界，不参与校验）
-inline constexpr size_t kMaxFeedbackPayloadBytes = 176;  // 反馈帧载荷上限（状态 64 / 诊断 176）
-inline constexpr size_t kMaxPayloadBytes = 176;         // 通用上限：长度攻击在该值前拒绝
-inline constexpr size_t kMaxFrameBytes = 192;           // 12 + 176 + 2 + 2 余量
+inline constexpr size_t kMaxFeedbackPayloadBytes = 192;  // 反馈帧载荷上限（状态 64 / 诊断 192，004 扩展）
+inline constexpr size_t kMaxPayloadBytes = 192;         // 通用上限：长度攻击在该值前拒绝
+inline constexpr size_t kMaxFrameBytes = 208;           // 12 + 192 + 2 + 2 余量（D-004-10 不变式）
 
 inline constexpr size_t kMotionPayloadBytes = 13;       // v4 + omega4 + run1 + reserved1 + lease2 + send_age1
 inline constexpr size_t kStopPayloadBytes = 0;
 inline constexpr size_t kStatusPayloadBytes = 64;
-inline constexpr size_t kDiagPayloadBytes = 176;       // 104 统计与装配 + 6×12 任务槽
+inline constexpr size_t kDiagPayloadBytes = 192;       // 104 统计与装配 + 4×4 编码器统计 + 6×12 任务槽
 inline constexpr size_t kMaxDiagTaskSlots = 6;
 inline constexpr size_t kDiagTaskEntryBytes = 12;
 
@@ -73,6 +73,11 @@ static_assert(kStatusPayloadBytes <= kMaxFeedbackPayloadBytes,
               "status payload exceeds declared feedback payload bound");
 static_assert(kMaxFeedbackPayloadBytes + kFrameHeaderBytes + kCrcBytes <= kMaxFrameBytes,
               "max frame constant is smaller than the largest well-formed frame");
+// D-004-10：帧长常量必须覆盖"头 + 最大载荷 + CRC"，解码器缓冲只允许由这些常量派生。
+static_assert(kMaxFrameBytes >= kFrameHeaderBytes + kMaxPayloadBytes + kCrcBytes,
+              "kMaxFrameBytes must cover header + max payload + crc");
+static_assert(kMaxPayloadBytes >= kDiagPayloadBytes,
+              "kMaxPayloadBytes must cover the diag payload");
 
 // 类型要求的载荷长度（-1 表示未知类型）。长度不匹配按 kRejectedLength 拒绝。
 constexpr int RequiredPayloadBytes(uint8_t raw) {

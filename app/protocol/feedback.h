@@ -15,6 +15,7 @@
 #include <cstdint>
 
 #include "app/chassis/chassis_types.h"
+#include "app/encoder/wheel_state.h"
 #include "app/mcu_os_lite/task_descriptor.h"
 #include "app/protocol/byte_ring.h"
 #include "app/protocol/command_manager.h"
@@ -66,7 +67,7 @@ struct FeedbackDiagTaskEntry {
   uint32_t max_elapsed_us = 0;
 };
 
-// 诊断帧载荷（定长 176 B：104 B 统计与装配信息 + 6×12 B 任务槽）。
+// 诊断帧载荷（定长 192 B：104 B 统计与装配信息 + 4×4 B 编码器统计 + 6×12 B 任务槽）。
 // 统计来源分工（评审 H7 的单一 writer 原则）：线格式类来自 ProtocolStats（解码器持有），
 // 会话/序号/迟到/挂起类来自 CommandManagerStats（命令管理器持有），字节环来自 ByteRingStatistics。
 struct FeedbackDiagPayload {
@@ -100,6 +101,11 @@ struct FeedbackDiagPayload {
   uint32_t dropped_task_count = 0;
   uint32_t flag_bits = 0;  // bit0 = truncated（dropped_task_count > 0）
   uint32_t reserved = 0;
+  // --- 编码器统计（004；唯一 writer = EncoderEstimatorStats，映射表见 004 详设）---
+  uint32_t encoder_samples = 0;
+  uint32_t encoder_out_of_range = 0;
+  uint32_t encoder_timestamp_invalid = 0;
+  uint32_t encoder_hardware_faults = 0;
   FeedbackDiagTaskEntry tasks[kMaxDiagTaskSlots] = {};
 };
 
@@ -111,15 +117,25 @@ struct FeedbackInputs {
   const chassis::WheelTarget* target = nullptr;
   const chassis::WheelSpeedRequest* output = nullptr;
   const chassis::SafetyStatus* safety = nullptr;
+  // 轮速测量数据源（004 起）。nullptr ⇒ 无数据源：kFlagSpeedValid/kFlagEncoderValid 清位、
+  // measured_* 写 0（不得让上位机把陈旧值读成测量值）。
+  const encoder::WheelState* wheel_state = nullptr;
   bool initialized = true;
   bool fault_latched = false;
 };
 
 FeedbackStatusPayload AssembleStatusPayload(const FeedbackInputs& inputs, uint64_t now_us);
+// encoder_stats 为 004 的可选输入：nullptr 表示本轮未接入编码器数据源（四个计数写 0）。
+struct EncoderStatsView {
+  uint32_t samples = 0;
+  uint32_t out_of_range = 0;
+  uint32_t timestamp_invalid = 0;
+  uint32_t hardware_faults = 0;
+};
 FeedbackDiagPayload AssembleDiagPayload(const mcu_os_lite::TaskSet* tasks, const ProtocolStats& stats,
                                        const CommandManagerStats& command_stats,
                                        const ByteRingStatistics& ring, bool limits_config_valid,
-                                       uint64_t now_ms);
+                                       const EncoderStatsView* encoder_stats, uint64_t now_ms);
 
 size_t EncodeStatusFrame(const FeedbackStatusPayload& payload, uint32_t seq, uint8_t* out,
                          size_t out_capacity);

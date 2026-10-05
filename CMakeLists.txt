@@ -109,11 +109,25 @@ else()
     app/protocol/feedback.cc
     app/protocol/feedback_limiter.cc
   )
+  # --- 编码器估计库（004）---
+  set(ROBOTCAR01_ENCODER_SOURCES
+    app/encoder/encoder_config.cc
+    app/encoder/wheel_state.cc
+    app/encoder/encoder_estimator.cc
+  )
+  add_library(robotcar01_encoder STATIC ${ROBOTCAR01_ENCODER_SOURCES})
+  target_include_directories(robotcar01_encoder PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+  target_compile_options(robotcar01_encoder PRIVATE -Wall -Wextra -Werror)
+  target_link_libraries(robotcar01_encoder PUBLIC robotcar01_mcu_os_lite)
+
   add_library(robotcar01_protocol STATIC ${ROBOTCAR01_PROTOCOL_SOURCES})
   target_include_directories(robotcar01_protocol PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_compile_options(robotcar01_protocol PRIVATE -Wall -Wextra -Werror)
   # 反馈诊断帧消费 TaskSet（002），命令快照承载 chassis 纯数据（001）
-  target_link_libraries(robotcar01_protocol PUBLIC robotcar01_chassis robotcar01_mcu_os_lite)
+  # 依赖方向（D-004-10/评审 S-8）：protocol → encoder（反馈组装需要 WheelState）；
+  # encoder 不得依赖 protocol，避免循环。
+  target_link_libraries(robotcar01_protocol PUBLIC robotcar01_chassis robotcar01_mcu_os_lite
+                                                robotcar01_encoder)
 
   # --- host 单元测试 target ---
   enable_testing()

@@ -52,7 +52,12 @@ enum DiagOffset : size_t {
   kDroppedTaskCount = 92,
   kDiagFlagBits = 96,
   kDiagReserved = 100,
-  kTasksFirst = 104,
+  // --- 004 追加：编码器统计（唯一 writer = EncoderEstimatorStats）---
+  kEncoderSamples = 104,
+  kEncoderOutOfRange = 108,
+  kEncoderTimestampInvalid = 112,
+  kEncoderHardwareFaults = 116,
+  kTasksFirst = 120,
 };
 
 // 编译期校验：偏移表与字段总长必须恰好等于声明的诊断载荷长度（防止再次出现长度/偏移不一致）。
@@ -158,7 +163,28 @@ FeedbackStatusPayload AssembleStatusPayload(const FeedbackInputs& inputs, uint64
   if (inputs.safety != nullptr && !inputs.safety->allow_motion) {
     payload.limit_reason |= static_cast<uint32_t>(chassis::LimitReason::kSafety);
   }
-  // 004 之前无轮速/编码器数据源：kFlagSpeedValid / kFlagEncoderValid 恒不置位
+  // 轮速维度（004）：逐位置位定义见 004 详设
+  //   kFlagEncoderValid = wheel_state != nullptr 且两侧无 越界/时间戳/硬件 质量差
+  //   kFlagSpeedValid   = kFlagEncoderValid 且两侧 valid（本窗口或已完成的低速累加发布）
+  //   measured_*       仅在 kFlagSpeedValid 时写入真实值，否则写 0
+  if (inputs.wheel_state != nullptr) {
+    const encoder::WheelState& wheel = *inputs.wheel_state;
+    const uint32_t blocking = encoder::kQualityCountOutOfRange |
+                             encoder::kQualityTimestampInvalid |
+                             encoder::kQualityHardwareFault;
+    const bool encoder_ok = (wheel.left.quality & blocking) == 0u &&
+                            (wheel.right.quality & blocking) == 0u;
+    if (encoder_ok) {
+      flags |= kFlagEncoderValid;
+      valid |= kFlagEncoderValid;
+    }
+    if (encoder_ok && wheel.left.valid && wheel.right.valid) {
+      flags |= kFlagSpeedValid;
+      valid |= kFlagSpeedValid;
+      payload.measured_left_mps = wheel.left.speed_mps;
+      payload.measured_right_mps = wheel.right.speed_mps;
+    }
+  }
 
   payload.status_flags = flags;
   payload.flags_valid = valid;
@@ -168,7 +194,7 @@ FeedbackStatusPayload AssembleStatusPayload(const FeedbackInputs& inputs, uint64
 FeedbackDiagPayload AssembleDiagPayload(const mcu_os_lite::TaskSet* tasks, const ProtocolStats& stats,
                                        const CommandManagerStats& command_stats,
                                        const ByteRingStatistics& ring, bool limits_config_valid,
-                                       uint64_t now_ms) {
+                                       const EncoderStatsView* encoder_stats, uint64_t now_ms) {
   FeedbackDiagPayload payload{};
   payload.uptime_ms = (now_ms > 0xFFFFFFFFull) ? 0xFFFFFFFFu : static_cast<uint32_t>(now_ms);
   // 线格式类计数（解码器）
@@ -195,6 +221,13 @@ FeedbackDiagPayload AssembleDiagPayload(const mcu_os_lite::TaskSet* tasks, const
   payload.ring_overflow_bytes = ring.overflow_drop_bytes;  // 单一真源（INV-003-9）
   payload.ring_high_water = ring.high_water_bytes;
   payload.limits_config_valid = limits_config_valid ? 1u : 0u;
+  // 编码器统计（004）：nullptr ⇒ 数据源未接入，四个计数保持 0（不以 0 冒充"零故障"）
+  if (encoder_stats != nullptr) {
+    payload.encoder_samples = encoder_stats->samples;
+    payload.encoder_out_of_range = encoder_stats->out_of_range;
+    payload.encoder_timestamp_invalid = encoder_stats->timestamp_invalid;
+    payload.encoder_hardware_faults = encoder_stats->hardware_faults;
+  }
 
   uint32_t copied = 0;
   uint32_t dropped = 0;
@@ -275,6 +308,10 @@ size_t EncodeDiagFrame(const FeedbackDiagPayload& payload, uint32_t seq, uint8_t
   PutLe32(body + kDroppedTaskCount, payload.dropped_task_count);
   PutLe32(body + kDiagFlagBits, payload.flag_bits);
   PutLe32(body + kDiagReserved, payload.reserved);
+  PutLe32(body + kEncoderSamples, payload.encoder_samples);
+  PutLe32(body + kEncoderOutOfRange, payload.encoder_out_of_range);
+  PutLe32(body + kEncoderTimestampInvalid, payload.encoder_timestamp_invalid);
+  PutLe32(body + kEncoderHardwareFaults, payload.encoder_hardware_faults);
   for (size_t i = 0; i < kMaxDiagTaskSlots; ++i) {
     const size_t base = kTasksFirst + i * kDiagTaskEntryBytes;
     PutLe32(body + base + 0, payload.tasks[i].run_count);
@@ -345,6 +382,10 @@ bool DecodeDiagPayload(const DecodedFrame& frame, FeedbackDiagPayload& out) {
   result.dropped_task_count = GetLe32(body + kDroppedTaskCount);
   result.flag_bits = GetLe32(body + kDiagFlagBits);
   result.reserved = GetLe32(body + kDiagReserved);
+  result.encoder_samples = GetLe32(body + kEncoderSamples);
+  result.encoder_out_of_range = GetLe32(body + kEncoderOutOfRange);
+  result.encoder_timestamp_invalid = GetLe32(body + kEncoderTimestampInvalid);
+  result.encoder_hardware_faults = GetLe32(body + kEncoderHardwareFaults);
   for (size_t i = 0; i < kMaxDiagTaskSlots; ++i) {
     const size_t base = kTasksFirst + i * kDiagTaskEntryBytes;
     result.tasks[i].run_count = GetLe32(body + base + 0);
