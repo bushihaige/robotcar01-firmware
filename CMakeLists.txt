@@ -99,7 +99,26 @@ else()
   target_include_directories(robotcar01_mcu_os_lite PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_compile_options(robotcar01_mcu_os_lite PRIVATE -Wall -Wextra -Werror)
 
+  # --- 协议库（003；源列表变量供 fw 分支 008 复用，D-003-8 本轮不编入 fw） ---
+  set(ROBOTCAR01_PROTOCOL_SOURCES
+    app/protocol/byte_ring.cc
+    app/protocol/frame.cc
+    app/protocol/decoder.cc
+    app/protocol/session.cc
+    app/protocol/command_manager.cc
+    app/protocol/feedback.cc
+    app/protocol/feedback_limiter.cc
+  )
+  add_library(robotcar01_protocol STATIC ${ROBOTCAR01_PROTOCOL_SOURCES})
+  target_include_directories(robotcar01_protocol PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+  target_compile_options(robotcar01_protocol PRIVATE -Wall -Wextra -Werror)
+  # 反馈诊断帧消费 TaskSet（002），命令快照承载 chassis 纯数据（001）
+  target_link_libraries(robotcar01_protocol PUBLIC robotcar01_chassis robotcar01_mcu_os_lite)
+
   # --- host 单元测试 target ---
   enable_testing()
   add_subdirectory(tests)
+
+  # --- host 调试工具（003 A7：真实字节流端到端验证） ---
+  add_subdirectory(tools)
 endif()
