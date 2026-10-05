@@ -78,12 +78,21 @@ void PrintBanner(const ClockResult& clock) {
   robotcar01::platform::UartWriteLine("");
   robotcar01::platform::UartWriteLabelHex("reg: FLASH_ACR=", FLASH->ACR);
   robotcar01::platform::UartWriteLine("");
+  // F40x 的 VOS 语义（stm32f4xx_hal_pwr_ex.h）：PWR_REGULATOR_VOLTAGE_SCALE1 == PWR_CR_VOS，
+  // 即"VOS 位 = 1"是 Scale 1（复位默认，fHCLK 上限 168 MHz）；位 = 0 才是 Scale 2（上限 144 MHz）。
+  const bool vos_scale1 = (PWR->CR & PWR_CR_VOS) != 0U;
   robotcar01::platform::UartWrite("reg: VOS=");
-  robotcar01::platform::UartWriteLine((PWR->CR & PWR_CR_VOS) != 0U ? "scale2" : "scale1");
+  robotcar01::platform::UartWriteLine(vos_scale1 ? "scale1 (168MHz allowed)" : "scale2 (max 144MHz!)");
   PrintResetFlags();
 
   robotcar01::platform::UartWrite("match: sysclk=");
-  robotcar01::platform::UartWriteLine(sysclk == robotcar01::platform::kSysclkHz ? "OK" : "MISMATCH");
+  robotcar01::platform::UartWrite(sysclk == robotcar01::platform::kSysclkHz ? "OK" : "MISMATCH");
+  robotcar01::platform::UartWrite(" vos=");
+  robotcar01::platform::UartWrite(vos_scale1 ? "OK" : "MISMATCH");
+  robotcar01::platform::UartWrite(" flash_ws=");
+  robotcar01::platform::UartWriteU32(FLASH->ACR & FLASH_ACR_LATENCY);
+  robotcar01::platform::UartWriteLine("");
+
   robotcar01::platform::UartWrite("uart: ");
   robotcar01::platform::UartWriteU32(robotcar01::platform::kConsoleBaud);
   robotcar01::platform::UartWriteLine(" 8N1 on USART1 PA9/PA10");

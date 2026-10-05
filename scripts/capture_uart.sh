@@ -34,7 +34,7 @@ echo "== 上传采集脚本 =="
 python3 "$REMOTE_PY" ps "New-Item -ItemType Directory -Force -Path 'E:\File\robotcar01_bringup' | Out-Null; 'ok'"
 python3 "$REMOTE_PY" put "$FW_DIR/scripts/capture_uart_ps.ps1" "$REMOTE_PS"
 
-echo "== 远端采集 ${SECONDS_TO_CAPTURE}s on $PORT（现在可以复位板子） =="
+echo "== 远端采集 ${SECONDS_TO_CAPTURE}s on ${PORT}（现在可以复位板子） =="
 python3 "$REMOTE_PY" ps "powershell -ExecutionPolicy Bypass -File '$REMOTE_PS' -Port $PORT -Baud 115200 -Seconds $SECONDS_TO_CAPTURE -Out 'E:\File\robotcar01_bringup\uart_log.txt'"
 
 echo "== 回传日志 =="

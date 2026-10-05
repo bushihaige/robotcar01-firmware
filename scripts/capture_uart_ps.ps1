@@ -1,20 +1,32 @@
-# RobotCar01 串口采集（在 Honor PC 上运行，带宿主时间戳）——Iteration 002.5
+# RobotCar01 UART capture (runs on the Honor PC, timestamped) -- Iteration 002.5
 #
-# 目的：为验收 4/5 提供**带时间戳**的串口日志（评审 H-5：心跳间隔必须可量化）。
-# 输出每行格式： <elapsed_ms>\t<原始行>
-# 用法（由 Mac 侧 scripts/capture_uart.sh 调用，或本机直接运行）：
-#   powershell -ExecutionPolicy Bypass -File capture_uart_ps.ps1 -Port COM15 -Baud 115200 -Seconds 15
+# Purpose: produce a timestamped serial log so heartbeat intervals can be measured
+# (review H-5: the heartbeat period must be quantified, not eyeballed).
+# Output line format: <elapsed_ms>TAB<original line>
+#
+# NOTE: this file must stay ASCII-only. Windows PowerShell 5.1 reads .ps1 files using
+# the system ANSI code page unless a BOM is present, so non-ASCII comments get
+# mis-decoded and break parsing ("UnexpectedToken").
+#
+# Usage (normally invoked by ../scripts/capture_uart.sh from the Mac):
+#   powershell -ExecutionPolicy Bypass -File capture_uart_ps.ps1
+# Optional params: -Port COM15 -Baud 115200 -Seconds 45 -Out E:\File\robotcar01_bringup\uart_log.txt
+#
+# Start this BEFORE resetting the board, otherwise the boot banner is missed.
 
 param(
   [string]$Port = "COM15",
   [int]$Baud = 115200,
-  [int]$Seconds = 15,
+  [int]$Seconds = 45,
   [string]$Out = "E:\File\robotcar01_bringup\uart_log.txt"
 )
 
 $ErrorActionPreference = "Stop"
+
 $outDir = Split-Path -Parent $Out
-if ($outDir -and -not (Test-Path $outDir)) { New-Item -ItemType Directory -Force -Path $outDir | Out-Null }
+if ($outDir -and -not (Test-Path $outDir)) {
+  New-Item -ItemType Directory -Force -Path $outDir | Out-Null
+}
 
 $sp = New-Object System.IO.Ports.SerialPort $Port, $Baud, "None", 8, "One"
 $sp.ReadTimeout = 500
@@ -25,7 +37,6 @@ $sw = New-Object System.IO.StreamWriter($Out, $false, [System.Text.Encoding]::AS
 $sw.NewLine = "`n"
 $watch = [System.Diagnostics.Stopwatch]::StartNew()
 
-# 提示：应在复位板子**之前**启动本采集，否则会漏掉启动横幅（评审 C-6 第⑦项）。
 while ($watch.Elapsed.TotalSeconds -lt $Seconds) {
   try {
     $line = $sp.ReadLine()
@@ -42,4 +53,4 @@ while ($watch.Elapsed.TotalSeconds -lt $Seconds) {
 
 $sw.Close()
 $sp.Close()
-Write-Output ("captured {0}s to {1}" -f $Seconds, $Out)
+Write-Output ("captured {0}s on {1} -> {2}" -f $Seconds, $Port, $Out)
