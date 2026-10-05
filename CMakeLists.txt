@@ -69,6 +69,8 @@ if(ROBOTCAR01_BUILD_FW)
   target_compile_definitions(robotcar01_fw PRIVATE STM32F407xx USE_HAL_DRIVER)
   target_compile_options(robotcar01_fw PRIVATE -Wall -Wextra -Werror)
   target_link_libraries(robotcar01_fw PRIVATE robotcar01_hal)
+  # Generic 工具链下 CMake 不追加平台后缀，显式固定 ELF 产物名（验收 1 要求 robotcar01_fw.elf）
+  set_target_properties(robotcar01_fw PROPERTIES SUFFIX ".elf")
 
   # 产物：ELF + HEX（供 ST-Link 烧录）+ BIN + size 报告
   add_custom_command(TARGET robotcar01_fw POST_BUILD
