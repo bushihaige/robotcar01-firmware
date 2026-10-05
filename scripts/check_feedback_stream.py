@@ -16,8 +16,8 @@ MAGIC = bytes([0x52, 0x43, 0x30, 0x31])
 VERSION = 0x01
 HEADER_BYTES = 12
 CRC_BYTES = 2
-MAX_FRAME_BYTES = 216
-REQUIRED_PAYLOAD = {0x01: 13, 0x02: 0, 0x81: 64, 0x82: 200}
+MAX_FRAME_BYTES = 192
+REQUIRED_PAYLOAD = {0x01: 13, 0x02: 0, 0x81: 64, 0x82: 176}
 
 
 def crc16_ccitt_false(data: bytes) -> int:

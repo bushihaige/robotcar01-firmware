@@ -130,9 +130,20 @@ TEST(FeedbackTest, DiagFrameRoundTripAndTruncation) {
   ring.overflow_drop_bytes = 7;
   ring.high_water_bytes = 100;
 
-  const FeedbackDiagPayload payload = AssembleDiagPayload(&tasks, stats, ring, 12345);
+  CommandManagerStats command_stats{};
+  command_stats.accepted = 5;
+  command_stats.seq_rejected = 2;
+  command_stats.stale_frames = 1;
+  command_stats.session_resets = 1;
+  const FeedbackDiagPayload payload =
+      AssembleDiagPayload(&tasks, stats, command_stats, ring, /*limits_config_valid=*/true, 12345);
   EXPECT_EQ(payload.task_count, kMaxDiagTaskSlots);
   EXPECT_EQ(payload.dropped_task_count, 10u - kMaxDiagTaskSlots);
+  EXPECT_EQ(payload.command_accepted, 5u);
+  EXPECT_EQ(payload.seq_rejected, 2u);
+  EXPECT_EQ(payload.stale_frames, 1u);
+  EXPECT_EQ(payload.session_resets, 1u);
+  EXPECT_EQ(payload.limits_config_valid, 1u);
   EXPECT_EQ(payload.flag_bits & 1u, 1u);  // truncated
 
   uint8_t frame[256] = {};
@@ -154,6 +165,9 @@ TEST(FeedbackTest, DiagFrameRoundTripAndTruncation) {
   EXPECT_EQ(decoded.ring_overflow_bytes, 7u);
   EXPECT_EQ(decoded.task_count, kMaxDiagTaskSlots);
   EXPECT_EQ(decoded.dropped_task_count, 10u - kMaxDiagTaskSlots);
+  EXPECT_EQ(decoded.command_accepted, 5u);
+  EXPECT_EQ(decoded.seq_rejected, 2u);
+  EXPECT_EQ(decoded.limits_config_valid, 1u);
 }
 
 // 限频：Init 后首次即到期；失败只计数且不推进相位

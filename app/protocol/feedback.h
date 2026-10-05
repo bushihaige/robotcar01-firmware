@@ -57,16 +57,20 @@ struct FeedbackStatusPayload {
   uint32_t reserved[3] = {};
 };
 
-// 诊断帧任务槽：mcu_os_lite::TaskSet 的紧凑投影（不拥有 name 字符串）。
+// 诊断帧任务槽（线格式，逐字段定长；不含指针与名称字符串）。
+// 说明：run_count / max_elapsed_us 在 mcu_os_lite 为 uint64，此处窄化为 uint32 并**饱和**
+// 到 0xFFFFFFFF（不静默回绕）。
 struct FeedbackDiagTaskEntry {
-  const char* name = "";
   uint32_t run_count = 0;
   uint32_t overrun_count = 0;
   uint32_t max_elapsed_us = 0;
 };
 
-// 诊断帧载荷（定长 64 B：28 B 统计 + 8 B 任务元信息 + 4 B 保留 + 8×4 B 任务槽）。
+// 诊断帧载荷（定长 176 B：104 B 统计与装配信息 + 6×12 B 任务槽）。
+// 统计来源分工（评审 H7 的单一 writer 原则）：线格式类来自 ProtocolStats（解码器持有），
+// 会话/序号/迟到/挂起类来自 CommandManagerStats（命令管理器持有），字节环来自 ByteRingStatistics。
 struct FeedbackDiagPayload {
+  // --- ProtocolStats（解码器）---
   uint32_t uptime_ms = 0;
   uint32_t protocol_frames_accepted = 0;
   uint32_t protocol_frames_rejected = 0;
@@ -77,14 +81,25 @@ struct FeedbackDiagPayload {
   uint32_t bad_length = 0;
   uint32_t bad_crc = 0;
   uint32_t bad_reserved = 0;
+  // --- CommandManagerStats（命令管理器）---
+  uint32_t command_accepted = 0;
+  uint32_t command_rejected = 0;
+  uint32_t command_stops = 0;
   uint32_t seq_rejected = 0;
+  uint32_t run_requests_ignored = 0;
+  uint32_t stale_frames = 0;
+  uint32_t suspended_rejected = 0;
+  uint32_t wrong_direction_frames = 0;
+  uint32_t session_resets = 0;
+  // --- ByteRingStatistics（字节环）---
   uint32_t ring_overflow_bytes = 0;
   uint32_t ring_high_water = 0;
-  uint32_t wrong_direction_frames = 0;
+  // --- 装配信息 ---
+  uint32_t limits_config_valid = 0;  // 1 = CommandLimits 已由应用配置填充（0 = 范围校验未启用）
   uint32_t task_count = 0;
   uint32_t dropped_task_count = 0;
+  uint32_t flag_bits = 0;  // bit0 = truncated（dropped_task_count > 0）
   uint32_t reserved = 0;
-  uint32_t flag_bits = 0;  // bit0 = truncated
   FeedbackDiagTaskEntry tasks[kMaxDiagTaskSlots] = {};
 };
 
@@ -102,7 +117,9 @@ struct FeedbackInputs {
 
 FeedbackStatusPayload AssembleStatusPayload(const FeedbackInputs& inputs, uint64_t now_us);
 FeedbackDiagPayload AssembleDiagPayload(const mcu_os_lite::TaskSet* tasks, const ProtocolStats& stats,
-                                       const ByteRingStatistics& ring, uint64_t now_ms);
+                                       const CommandManagerStats& command_stats,
+                                       const ByteRingStatistics& ring, bool limits_config_valid,
+                                       uint64_t now_ms);
 
 size_t EncodeStatusFrame(const FeedbackStatusPayload& payload, uint32_t seq, uint8_t* out,
                          size_t out_capacity);

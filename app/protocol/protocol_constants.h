@@ -26,15 +26,16 @@ inline constexpr uint8_t kMagicByte3 = 0x31;  // '1'
 inline constexpr size_t kFrameHeaderBytes = 12;         // magic4 + ver1 + type1 + flags1 + len1 + seq4
 inline constexpr size_t kCrcBytes = 2;
 inline constexpr size_t kMaxCommandPayloadBytes = 32;   // 命令帧载荷上限（只作装配期静态上界，不参与校验）
-inline constexpr size_t kMaxFeedbackPayloadBytes = 200;  // 反馈帧载荷上限（状态 64 / 诊断 200）
-inline constexpr size_t kMaxPayloadBytes = 200;         // 通用上限：长度攻击在该值前拒绝
-inline constexpr size_t kMaxFrameBytes = 216;           // 12 + 200 + 2 + 2 余量
+inline constexpr size_t kMaxFeedbackPayloadBytes = 176;  // 反馈帧载荷上限（状态 64 / 诊断 176）
+inline constexpr size_t kMaxPayloadBytes = 176;         // 通用上限：长度攻击在该值前拒绝
+inline constexpr size_t kMaxFrameBytes = 192;           // 12 + 176 + 2 + 2 余量
 
 inline constexpr size_t kMotionPayloadBytes = 13;       // v4 + omega4 + run1 + reserved1 + lease2 + send_age1
 inline constexpr size_t kStopPayloadBytes = 0;
 inline constexpr size_t kStatusPayloadBytes = 64;
-inline constexpr size_t kDiagPayloadBytes = 200;       // 28 统计 + 8 元信息 + 4 保留 + 8×16 任务槽
-inline constexpr size_t kMaxDiagTaskSlots = 8;
+inline constexpr size_t kDiagPayloadBytes = 176;       // 104 统计与装配 + 6×12 任务槽
+inline constexpr size_t kMaxDiagTaskSlots = 6;
+inline constexpr size_t kDiagTaskEntryBytes = 12;
 
 // 消息类型：命令下行（0x0x）/ 反馈上行（0x8x）方向分离，便于拒绝"反向帧"（A3.4）。
 enum class MessageType : uint8_t {

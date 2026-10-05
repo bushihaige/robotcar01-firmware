@@ -24,7 +24,7 @@ enum StatusOffset : size_t {
   kStatusReserved = 52,
 };
 
-// 诊断帧载荷字段偏移（小端）
+// 诊断帧载荷字段偏移（小端）：104 B 统计与装配 + 6×12 B 任务槽 = 176 B
 enum DiagOffset : size_t {
   kUptimeMs = 0,
   kProtocolAccepted = 4,
@@ -36,19 +36,32 @@ enum DiagOffset : size_t {
   kBadLength = 28,
   kBadCrc = 32,
   kBadReserved = 36,
-  kSeqRejected = 40,
-  kRingOverflow = 44,
-  kRingHighWater = 48,
-  kWrongDirection = 52,
-  kTaskCount = 56,
-  kDroppedTaskCount = 60,
-  kDiagReserved = 64,
-  kDiagFlagBits = 68,
-  kTasksFirst = 72,
+  kCommandAccepted = 40,
+  kCommandRejected = 44,
+  kCommandStops = 48,
+  kSeqRejected = 52,
+  kRunRequestsIgnored = 56,
+  kStaleFrames = 60,
+  kSuspendedRejected = 64,
+  kWrongDirection = 68,
+  kSessionResets = 72,
+  kRingOverflow = 76,
+  kRingHighWater = 80,
+  kLimitsConfigValid = 84,
+  kTaskCount = 88,
+  kDroppedTaskCount = 92,
+  kDiagFlagBits = 96,
+  kDiagReserved = 100,
+  kTasksFirst = 104,
 };
 
+// 编译期校验：偏移表与字段总长必须恰好等于声明的诊断载荷长度（防止再次出现长度/偏移不一致）。
+static_assert(kTasksFirst + kMaxDiagTaskSlots * kDiagTaskEntryBytes == kDiagPayloadBytes,
+              "diag payload offsets must exactly fill kDiagPayloadBytes");
+static_assert(kStatusReserved + 3 * sizeof(uint32_t) == kStatusPayloadBytes,
+              "status payload offsets must exactly fill kStatusPayloadBytes");
+
 constexpr uint32_t kDiagFlagTruncated = 1u << 0;
-constexpr size_t kTaskEntryBytes = 16;
 
 // 命令标志位（FeedbackStatusPayload::command_flags 的位语义）
 constexpr uint32_t kCommandFlagRunRequested = 1u << 0;
@@ -153,9 +166,12 @@ FeedbackStatusPayload AssembleStatusPayload(const FeedbackInputs& inputs, uint64
 }
 
 FeedbackDiagPayload AssembleDiagPayload(const mcu_os_lite::TaskSet* tasks, const ProtocolStats& stats,
-                                       const ByteRingStatistics& ring, uint64_t now_ms) {
+                                       const CommandManagerStats& command_stats,
+                                       const ByteRingStatistics& ring, bool limits_config_valid,
+                                       uint64_t now_ms) {
   FeedbackDiagPayload payload{};
   payload.uptime_ms = (now_ms > 0xFFFFFFFFull) ? 0xFFFFFFFFu : static_cast<uint32_t>(now_ms);
+  // 线格式类计数（解码器）
   payload.protocol_frames_accepted = stats.frames_accepted;
   payload.protocol_frames_rejected = stats.frames_rejected;
   payload.bad_magic = stats.bad_magic;
@@ -165,19 +181,29 @@ FeedbackDiagPayload AssembleDiagPayload(const mcu_os_lite::TaskSet* tasks, const
   payload.bad_length = stats.bad_length;
   payload.bad_crc = stats.bad_crc;
   payload.bad_reserved = stats.bad_reserved;
-  payload.seq_rejected = stats.seq_rejected;
+  // 会话/序号/迟到/挂起类计数（命令管理器，评审 H7：单一 writer）
+  payload.command_accepted = command_stats.accepted;
+  payload.command_rejected = command_stats.rejected;
+  payload.command_stops = command_stats.stops;
+  payload.seq_rejected = command_stats.seq_rejected;
+  payload.run_requests_ignored = command_stats.run_requests_ignored;
+  payload.stale_frames = command_stats.stale_frames;
+  payload.suspended_rejected = command_stats.suspended_rejected;
+  payload.wrong_direction_frames = command_stats.wrong_direction;
+  payload.session_resets = command_stats.session_resets;
+  // 字节环
   payload.ring_overflow_bytes = ring.overflow_drop_bytes;  // 单一真源（INV-003-9）
   payload.ring_high_water = ring.high_water_bytes;
-  payload.wrong_direction_frames = stats.wrong_direction_frames;
+  payload.limits_config_valid = limits_config_valid ? 1u : 0u;
 
   uint32_t copied = 0;
   uint32_t dropped = 0;
   if (tasks != nullptr) {
     for (size_t i = 0; i < tasks->size(); ++i) {
-      const mcu_os_lite::TaskEntry& entry = tasks->at(i);
       if (copied < kMaxDiagTaskSlots) {
+        const mcu_os_lite::TaskEntry& entry = tasks->at(i);
         FeedbackDiagTaskEntry& slot = payload.tasks[copied];
-        slot.name = (entry.config != nullptr && entry.config->name != nullptr) ? entry.config->name : "";
+        // uint64 → uint32 窄化必须饱和，不得静默回绕
         slot.run_count = (entry.stats.run_count > 0xFFFFFFFFull)
                              ? 0xFFFFFFFFu
                              : static_cast<uint32_t>(entry.stats.run_count);
@@ -233,20 +259,27 @@ size_t EncodeDiagFrame(const FeedbackDiagPayload& payload, uint32_t seq, uint8_t
   PutLe32(body + kBadLength, payload.bad_length);
   PutLe32(body + kBadCrc, payload.bad_crc);
   PutLe32(body + kBadReserved, payload.bad_reserved);
+  PutLe32(body + kCommandAccepted, payload.command_accepted);
+  PutLe32(body + kCommandRejected, payload.command_rejected);
+  PutLe32(body + kCommandStops, payload.command_stops);
   PutLe32(body + kSeqRejected, payload.seq_rejected);
+  PutLe32(body + kRunRequestsIgnored, payload.run_requests_ignored);
+  PutLe32(body + kStaleFrames, payload.stale_frames);
+  PutLe32(body + kSuspendedRejected, payload.suspended_rejected);
+  PutLe32(body + kWrongDirection, payload.wrong_direction_frames);
+  PutLe32(body + kSessionResets, payload.session_resets);
   PutLe32(body + kRingOverflow, payload.ring_overflow_bytes);
   PutLe32(body + kRingHighWater, payload.ring_high_water);
-  PutLe32(body + kWrongDirection, payload.wrong_direction_frames);
+  PutLe32(body + kLimitsConfigValid, payload.limits_config_valid);
   PutLe32(body + kTaskCount, payload.task_count);
   PutLe32(body + kDroppedTaskCount, payload.dropped_task_count);
-  PutLe32(body + kDiagReserved, payload.reserved);
   PutLe32(body + kDiagFlagBits, payload.flag_bits);
+  PutLe32(body + kDiagReserved, payload.reserved);
   for (size_t i = 0; i < kMaxDiagTaskSlots; ++i) {
-    const size_t base = kTasksFirst + i * kTaskEntryBytes;
-    PutLe32(body + base + 0, (payload.tasks[i].run_count));
+    const size_t base = kTasksFirst + i * kDiagTaskEntryBytes;
+    PutLe32(body + base + 0, payload.tasks[i].run_count);
     PutLe32(body + base + 4, payload.tasks[i].overrun_count);
     PutLe32(body + base + 8, payload.tasks[i].max_elapsed_us);
-    PutLe32(body + base + 12, 0u);  // 名称不进入线格式（避免变长字段）；保留为 0
   }
   return AssembleFeedbackFrame(static_cast<uint8_t>(MessageType::kFeedbackDiag), body,
                                kDiagPayloadBytes, seq, out, out_capacity);
@@ -296,20 +329,27 @@ bool DecodeDiagPayload(const DecodedFrame& frame, FeedbackDiagPayload& out) {
   result.bad_length = GetLe32(body + kBadLength);
   result.bad_crc = GetLe32(body + kBadCrc);
   result.bad_reserved = GetLe32(body + kBadReserved);
+  result.command_accepted = GetLe32(body + kCommandAccepted);
+  result.command_rejected = GetLe32(body + kCommandRejected);
+  result.command_stops = GetLe32(body + kCommandStops);
   result.seq_rejected = GetLe32(body + kSeqRejected);
+  result.run_requests_ignored = GetLe32(body + kRunRequestsIgnored);
+  result.stale_frames = GetLe32(body + kStaleFrames);
+  result.suspended_rejected = GetLe32(body + kSuspendedRejected);
+  result.wrong_direction_frames = GetLe32(body + kWrongDirection);
+  result.session_resets = GetLe32(body + kSessionResets);
   result.ring_overflow_bytes = GetLe32(body + kRingOverflow);
   result.ring_high_water = GetLe32(body + kRingHighWater);
-  result.wrong_direction_frames = GetLe32(body + kWrongDirection);
+  result.limits_config_valid = GetLe32(body + kLimitsConfigValid);
   result.task_count = GetLe32(body + kTaskCount);
   result.dropped_task_count = GetLe32(body + kDroppedTaskCount);
-  result.reserved = GetLe32(body + kDiagReserved);
   result.flag_bits = GetLe32(body + kDiagFlagBits);
+  result.reserved = GetLe32(body + kDiagReserved);
   for (size_t i = 0; i < kMaxDiagTaskSlots; ++i) {
-    const size_t base = kTasksFirst + i * kTaskEntryBytes;
+    const size_t base = kTasksFirst + i * kDiagTaskEntryBytes;
     result.tasks[i].run_count = GetLe32(body + base + 0);
     result.tasks[i].overrun_count = GetLe32(body + base + 4);
     result.tasks[i].max_elapsed_us = GetLe32(body + base + 8);
-    result.tasks[i].name = "";  // 名称不上线（线格式不含变长字段）
   }
   out = result;
   return true;

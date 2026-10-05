@@ -33,6 +33,7 @@ using robotcar01::protocol::ByteRing;
 using robotcar01::protocol::CommandLeaseConfig;
 using robotcar01::protocol::CommandLimits;
 using robotcar01::protocol::CommandManager;
+using robotcar01::protocol::CommandSnapshot;
 using robotcar01::protocol::DecodeStatus;
 using robotcar01::protocol::EncodeDiagFrame;
 using robotcar01::protocol::EncodeStatusFrame;
@@ -155,7 +156,8 @@ int main(int argc, char** argv) {
 
     // 反馈发送（限频由 FeedbackLimiter 决定；失败只计数，不影响命令路径）
     FeedbackInputs inputs{};
-    inputs.command = &manager.snapshot();
+    const CommandSnapshot snapshot = manager.snapshot();  // 按值持有，避免悬垂引用
+    inputs.command = &snapshot;
     if (limiter.ShouldSendStatus(now_us)) {
       const auto payload = AssembleStatusPayload(inputs, now_us);
       const size_t size = EncodeStatusFrame(payload, feedback_seq++, feedback_buffer,
@@ -167,7 +169,9 @@ int main(int argc, char** argv) {
       }
     }
     if (limiter.ShouldSendDiag(now_us)) {
-      const auto payload = AssembleDiagPayload(nullptr, stats, ring.statistics(), now_us / 1000);
+      // limits_config_valid=false：本工具不注入应用配置限值（008 装配时必须传 true）
+      const auto payload = AssembleDiagPayload(nullptr, stats, manager.stats(), ring.statistics(),
+                                              /*limits_config_valid=*/false, now_us / 1000);
       const size_t size =
           EncodeDiagFrame(payload, feedback_seq++, feedback_buffer, sizeof(feedback_buffer));
       if (size == 0) {

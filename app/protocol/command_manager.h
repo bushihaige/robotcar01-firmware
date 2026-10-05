@@ -81,7 +81,9 @@ class CommandManager {
   // 恢复：armed 保持 false，必须重新收到一帧"未请求运行"的有效命令才可再请求运行。
   void Resume();
 
-  const CommandSnapshot& snapshot() const { return snapshot_; }
+  // 按值返回：消费者拿到的是快照拷贝，无法长期持有引用而绕过租约判定（评审 C5）。
+  // 控制路径必须使用 CommandValidAt()/EffectiveSnapshot()（INV-003-8）。
+  CommandSnapshot snapshot() const { return snapshot_; }
 
   // 租约唯一判定（INV-003-8）。
   bool CommandValidAt(uint64_t now_us) const;
