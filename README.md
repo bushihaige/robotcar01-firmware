@@ -22,8 +22,10 @@ cmake --build --preset host
 ctest --preset host
 ```
 
-预期：全部用例通过，退出码 0（当前 **128** 个用例：000 smoke、001 的 22、002 的 22、003 的 36、
-004 的 23、005 的 25，含 `loopback_end_to_end` 端到端用例）。
+预期：全部用例通过，退出码 0（当前 **136** 个用例：000 smoke 1、001 的 21（kinematics 10 / safety_gate 6 /
+walking_skeleton 5）、002 的 22（scheduler 10 / health_monitor 12）、003 的 35、004 的 23、005 的 33
+（differential_kinematics 27 / body_state 3 / motion_desired 1 / feedback 新增 2），另含 `loopback_end_to_end`
+端到端用例）。
 
 ## 固件 target（Iteration 002.5 起启用）
 
