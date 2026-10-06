@@ -14,6 +14,7 @@ add_executable(robotcar01_tests
   feedback_test.cc
   wheel_state_test.cc
   encoder_estimator_test.cc
+  differential_kinematics_test.cc
 )
 
 target_compile_options(robotcar01_tests PRIVATE -Wall -Wextra -Werror)
@@ -21,7 +22,7 @@ target_compile_options(robotcar01_tests PRIVATE -Wall -Wextra -Werror)
 target_link_libraries(robotcar01_tests PRIVATE
   GTest::gtest_main GTest::gtest
   robotcar01_protocol
-  robotcar01_encoder
+  robotcar01_kinematics
 )
 target_include_directories(robotcar01_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../host_fakes)
 

@@ -22,7 +22,8 @@ cmake --build --preset host
 ctest --preset host
 ```
 
-预期：全部用例通过，退出码 0（当前 **44** 个用例：000 smoke 1 + 001 的 22 + 002 的 22，其中 scheduler 10 / health_monitor 12）。
+预期：全部用例通过，退出码 0（当前 **128** 个用例：000 smoke、001 的 22、002 的 22、003 的 36、
+004 的 23、005 的 25，含 `loopback_end_to_end` 端到端用例）。
 
 ## 固件 target（Iteration 002.5 起启用）
 
@@ -35,6 +36,9 @@ cmake -S . -B build/fw -DROBOTCAR01_BUILD_FW=ON \
   -DCMAKE_TOOLCHAIN_FILE="$PWD/cmake/arm-none-eabi.cmake"
 cmake --build build/fw
 ```
+
+fw 分支当前仍只编 `platform_stm32/` + vendor；**业务库（`app/` 各模块）编入固件属 Iteration 008**
+（D-003-8 / D-004-7 / 005 沿用）。
 
 ## 协议与 host 调试工具（Iteration 003 起）
 
@@ -57,6 +61,23 @@ Motion 载荷（13 B，小端）：`v_mps`(4) | `omega_radps`(4) | `run_requeste
 `lease_ms`(2) | `send_age_ms`(1)。`run_requested` **不是运行许可**：会话首帧永不使能，必须由
 上位机先发一帧"不请求运行"的有效命令（或显式 Stop 帧）完成 arm，最终启动裁决属 Iteration 007。
 
+Status 载荷（64 B，小端）字段偏移（**004/005 起已全部成为真实数据源**）：
+
+```text
+0   status_flags      4   limit_reason      8   flags_valid      12  command_seq
+16  command_age_us    20  session_generation 24 command_flags    28  target_left_mps
+32  target_right_mps  36  output_left_mps   40  output_right_mps 44  measured_left_mps
+48  measured_right_mps 52 target_scale      56  reserved[2]（必须写 0）
+```
+
+- `target_scale`（**005 起**，占用 003 的 `reserved[0]`，长度不变）：`WheelTarget::scale`，即
+  **域限幅比例**（车体域 × 轮速域 × 质量降级上限，不含加减速斜坡），仅在 `kFlagTargetValid`
+  置位时有意义；无 target 数据源时写 0。斜坡是否生效看 `limit_reason` 的 `kAccelLimit` 位。
+  这是**同一 v1 内的线格式语义变更**：003/004/005 固件必须同版本配对使用（单版本部署）。
+- `limit_reason` 位（`app/chassis/chassis_types.h`）：`0x01 kInvalid | 0x02 kBodySpeed |
+  0x04 kWheelSpeed | 0x08 kSafety | 0x10 kAccelLimit（005） | 0x20 kQualityDegraded（005）`；
+  0x10 表示加减速斜坡正在平滑目标，0x20 表示测量不可信导致降级轮速上限**实际限制了输出**。
+
 ### 调试工具
 
 ```bash
@@ -68,8 +89,24 @@ printf '524330310101000d01000000cdcc4c3e0000000000002c0100<b5><a6>\n' | \
 python3 scripts/check_feedback_stream.py ./build/host/tools/robotcar01_loopback
 ```
 
+工具参数：
+
+```text
+--frames N                 处理 N 行后退出（0 = 读到 EOF）
+--status-period-ms X       状态帧限频周期（默认 20）
+--diag-period-ms Y         诊断帧限频周期（默认 100）
+--lease-ms Z               命令租约（默认 300）
+--encoder-left-mps A       注入虚拟左轮速（004；启用编码器估计链路）
+--encoder-right-mps B      注入虚拟右轮速（004）
+--kin-accel-mps2 X         运动学加速上限（005；默认 0.5）
+--kin-decel-mps2 Y         运动学减速上限（005；默认 0.8）
+--kin-degraded-wheel-mps Z 质量降级轮速上限（005；默认 0.2）
+```
+
 工具使用**内部虚拟时钟**（每行输入推进 1 ms），输出帧数只由输入行数决定，不依赖墙钟、不随机器负载变化；
-不提供墙钟模式（真机联调由 008 的 USB 接线条承担）。工具是 host 证据，**不是** USB 真机链路证据。
+不提供墙钟模式（真机联调由 008 的 USB 接线条承担）。工具内 `allow_motion` 恒为 true（本工具不含安全
+状态机，007 负责）；`motion_allowed` 由 `protocol::MakeMotionDesired`（004 D-004-8 唯一构造式）计算。
+工具是 host 证据，**不是** USB 真机链路证据。
 
 ## 分支与 PR 流程（GitHub stacked PR，自 Iteration 002.5 起）
 
@@ -81,10 +118,13 @@ python3 scripts/check_feedback_stream.py ./build/host/tools/robotcar01_loopback
 ```text
 main
 └── iteration-002-clock-and-scheduler   → PR #1
-    └── iteration-002.5-minimal-bringup → PR #2   ← 当前
+    └── iteration-002.5-minimal-bringup → PR #2
+        └── iteration-003-command-and-feedback → PR #4
+            └── iteration-004-encoder-estimation → PR #5
+                └── iteration-005-differential-kinematics → PR #6（当前栈顶）
 ```
 
-分支命名：`iteration-<序号>-<owner-module>`（如 `iteration-003-command-and-feedback`）。
+分支命名：`iteration-<序号>-<owner-module>`（如 `iteration-005-differential-kinematics`）。
 
 常用命令（需 `gh` 已认证；`gh extension install github/gh-stack` 一次即可）：
 
@@ -103,34 +143,36 @@ gh stack rebase                    # 手动重排/变基
 
 ## 目录约定
 
+```text
 firmware/
-├── CMakeLists.txt              # ① 构建系统入口（顶层：host 库/测试 + fw 预留）
-├── CMakePresets.json           # ② 命令行预设（host）
+├── CMakeLists.txt              # ① 构建系统入口（host 库/测试 + fw 分支）
+├── CMakePresets.json           # ② 命令行预设（host / fw）
 ├── README.md                   # ③ 使用说明 / 命令入口
-├── .gitignore
-├── app/                        # ④ 平台无关业务 + MCU OS Lite
-│   ├── main.cc                 #    固件入口占位（fw target）
-│   ├── chassis/                #    001 起：底盘纯数据/运动学/安全门/walking skeleton
-│   └── mcu_os_lite/            #    002 起：MCU OS Lite 核心（clock/scheduler/health）
+├── app/                        # ④ 平台无关业务（不得引用 HAL/CMSIS）
+│   ├── chassis/                #    001：纯数据/运动学(001 切片)/安全门/walking skeleton
+│   ├── mcu_os_lite/            #    002：MCU OS Lite 核心（clock/scheduler/health）
+│   ├── protocol/               #    003：帧/解码器/命令管理/反馈/motion_desired(005)
+│   ├── encoder/                #    004：编码器配置/快照/轮速估计
+│   └── kinematics/             #    005：运动学配置/正运动学/差速运动学管线
 ├── platform_stm32/             # ⑤ STM32 HAL 适配（仅固件）
-│   └── README.md
-├── host_fakes/                 # ⑥ 测试替身 fake 外设（仅 host，按迭代递增填充）
-│   ├── README.md
-│   ├── fake_output.h           #    001：仲裁后输出请求 sink
-│   └── fake_clock.h            #    002：可步进单调时钟（驱动 scheduler）
-├── cmake/                      # ⑦ 构建辅助
-│   └── arm-none-eabi.cmake     #    交叉编译工具链文件
-└── tests/                      # ⑧ 单元测试（仅 host，链接业务库与 OS 库）
-    ├── CMakeLists.txt
-    ├── smoke_test.cc           #    000：框架接入冒烟
-    ├── kinematics_test.cc      #    001：差速/统一限幅/无效输入
-    ├── safety_gate_test.cc     #    001：安全门四组合
-    ├── walking_skeleton_test.cc  # 001：端到端四类断言
-    ├── scheduler_test.cc       #    002：周期/相位/回绕/不追赶/顺延
-    └── health_monitor_test.cc  #    002：overrun 停止/心跳窗口/锁存/恢复
+├── host_fakes/                 # ⑥ 测试替身 fake 外设（仅 host）
+├── cmake/                      # ⑦ 构建辅助（arm-none-eabi 工具链文件）
+├── tools/                      # ⑧ host 调试工具（loopback：字节流往返 + 端到端证据）
+├── scripts/                    # ⑨ 验证脚本（check_feedback_stream.py 等）
+├── linker/                     # ⑩ 链接脚本（STM32F407ZGTx）
+└── tests/                      # ⑪ 单元测试（仅 host，链接业务库与 OS 库）
+```
 
-边界不变量：`platform_stm32/` 不放业务代码；HAL 类型不得进入 `app/`；
-fake 外设只进 `host_fakes/`（仅 host 编译）。host 分支现有两个静态库：
-`robotcar01_chassis`（001 业务，`app/chassis/`）与 `robotcar01_mcu_os_lite`
-（002 OS 核心，`app/mcu_os_lite/`，源列表变量 `ROBOTCAR01_MCU_OS_LITE_SOURCES`
-为 fw 分支复用预留）。
+host 库与依赖方向（PUBLIC 依赖，禁止反向）：
+
+```text
+robotcar01_chassis（001）
+robotcar01_mcu_os_lite（002）
+robotcar01_encoder（004）   → mcu_os_lite
+robotcar01_kinematics（005）→ chassis + encoder
+robotcar01_protocol（003）  → chassis + mcu_os_lite + encoder
+```
+
+边界不变量：`platform_stm32/` 不放业务代码；HAL 类型不得进入 `app/`；fake 外设只进 `host_fakes/`
+（仅 host 编译）；`app/kinematics/` 与 `app/encoder/` 必须通过
+`grep -rniE "stm32|HAL_|cmsis" <目录>` = 0 的平台无关自证。

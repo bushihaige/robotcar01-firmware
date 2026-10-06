@@ -40,7 +40,7 @@ enum FeedbackFlags : uint32_t {
   kFlagForceDisable = 1u << 9,
 };
 
-// 状态帧载荷（定长 64 B：52 B 字段 + 12 B 保留，保留必须写 0）。
+// 状态帧载荷（定长 64 B：52 B 字段 + 8 B 字段 + 4 B 保留，保留必须写 0）。
 struct FeedbackStatusPayload {
   uint32_t status_flags = 0;
   uint32_t limit_reason = 0;
@@ -55,7 +55,14 @@ struct FeedbackStatusPayload {
   float output_right_mps = 0.0f;
   float measured_left_mps = 0.0f;   // 004 起有效
   float measured_right_mps = 0.0f;  // 004 起有效
-  uint32_t reserved[3] = {};
+  // 005 起：WheelTarget 的**域限幅比例**（不含加减速斜坡，D-005-6），仅 kFlagTargetValid
+  // 置位时有意义；无 target 数据源时写 0（不得让上位机把默认值读成"未限幅"）。
+  // 该字段占用 003 的 reserved[0]（长度不变，同一 v1 内的线格式语义变更，详设 §10）。
+  float target_scale = 1.0f;
+  // 005 起：逐侧编码器质量位（004 详设 §可观测性字段映射表的指派，005 落地补齐）。
+  // 与 kFlagEncoderValid 的"两侧无阻塞位"语义配合：上位机可区分"整体不可信"与"哪一侧不可信"。
+  uint32_t encoder_quality_left = 0;   // encoder::EncoderQuality 位组合
+  uint32_t encoder_quality_right = 0;  // 无 wheel_state 数据源时写 0
 };
 
 // 诊断帧任务槽（线格式，逐字段定长；不含指针与名称字符串）。

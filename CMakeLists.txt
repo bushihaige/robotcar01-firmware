@@ -120,6 +120,16 @@ else()
   target_compile_options(robotcar01_encoder PRIVATE -Wall -Wextra -Werror)
   target_link_libraries(robotcar01_encoder PUBLIC robotcar01_mcu_os_lite)
 
+  # --- 差速运动学库（005）：依赖方向 kinematics → chassis + encoder（无环） ---
+  add_library(robotcar01_kinematics STATIC
+    app/kinematics/kinematics_config.cc
+    app/kinematics/body_state.cc
+    app/kinematics/differential_kinematics.cc
+  )
+  target_include_directories(robotcar01_kinematics PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+  target_compile_options(robotcar01_kinematics PRIVATE -Wall -Wextra -Werror)
+  target_link_libraries(robotcar01_kinematics PUBLIC robotcar01_chassis robotcar01_encoder)
+
   add_library(robotcar01_protocol STATIC ${ROBOTCAR01_PROTOCOL_SOURCES})
   target_include_directories(robotcar01_protocol PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_compile_options(robotcar01_protocol PRIVATE -Wall -Wextra -Werror)
