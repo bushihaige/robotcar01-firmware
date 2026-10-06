@@ -5,7 +5,7 @@
 
 add_executable(robotcar01_loopback loopback_main.cc)
 target_compile_options(robotcar01_loopback PRIVATE -Wall -Wextra -Werror)
-target_link_libraries(robotcar01_loopback PRIVATE robotcar01_protocol)
+target_link_libraries(robotcar01_loopback PRIVATE robotcar01_protocol robotcar01_kinematics)
 
 # A7 端到端用例：hex 行输入 → 确定性反馈帧流 + 可解析统计行；由 Python 校验帧自洽性。
 find_package(Python3 COMPONENTS Interpreter)
