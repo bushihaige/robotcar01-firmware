@@ -36,6 +36,41 @@ cmake -S . -B build/fw -DROBOTCAR01_BUILD_FW=ON \
 cmake --build build/fw
 ```
 
+## 协议与 host 调试工具（Iteration 003 起）
+
+外部控制边界的线格式、错误码与上位机契约详见
+`docs/design docs/robotcar01_chassis_control/review_exec/iterations/003-command-and-feedback/command-and-feedback_detailed_design.md`。
+要点速览（**版式冻结，改版必须升 `version`**）：
+
+```text
+offset 0   magic 'R''C''0''1'（逐字节比较，禁止对整数常量 memcmp）
+offset 4   version = 1
+offset 5   msg_type: 0x01 Motion | 0x02 Stop | 0x81 FeedbackStatus | 0x82 FeedbackDiag
+offset 6   flags（保留，必须为 0；非 0 按 kRejectedFlag 拒绝）
+offset 7   payload_len（Motion=13, Stop=0, Status=64, Diag=200）
+offset 8   seq（uint32 LE；会话内必须严格递增，半程规则见详设）
+offset 12  payload
+...        crc16 = CRC-16/CCITT-FALSE(poly 0x1021, init 0xFFFF, 不反射, 无末异或)，uint32 LE 线序
+```
+
+Motion 载荷（13 B，小端）：`v_mps`(4) | `omega_radps`(4) | `run_requested`(1) | `reserved0`(1=0) |
+`lease_ms`(2) | `send_age_ms`(1)。`run_requested` **不是运行许可**：会话首帧永不使能，必须由
+上位机先发一帧"不请求运行"的有效命令（或显式 Stop 帧）完成 arm，最终启动裁决属 Iteration 007。
+
+### 调试工具
+
+```bash
+# 每行一个十六进制命令帧；stdout 出二进制反馈帧，stderr 出可解析统计行
+printf '524330310101000d01000000cdcc4c3e0000000000002c0100<b5><a6>\n' | \
+  ./build/host/tools/robotcar01_loopback --frames 5 > feedback.bin 2> stats.txt
+
+# 端到端自检（也被注册为 ctest 用例 loopback_end_to_end）
+python3 scripts/check_feedback_stream.py ./build/host/tools/robotcar01_loopback
+```
+
+工具使用**内部虚拟时钟**（每行输入推进 1 ms），输出帧数只由输入行数决定，不依赖墙钟、不随机器负载变化；
+不提供墙钟模式（真机联调由 008 的 USB 接线条承担）。工具是 host 证据，**不是** USB 真机链路证据。
+
 ## 分支与 PR 流程（GitHub stacked PR，自 Iteration 002.5 起）
 
 **硬规则：不得把迭代分支直接合并/推送到 `main`。** 每轮迭代一条分支 + 一个 PR，PR 的 base 指向
