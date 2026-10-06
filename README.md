@@ -7,7 +7,7 @@
 | cmake ≥ 3.24 | 构建 | brew 已装 |
 | AppleClang / clang++ | host 单测编译 | CommandLineTools 自带 |
 | GoogleTest | 单元测试框架 | brew 已装（googletest） |
-| arm-none-eabi-gcc | 固件交叉编译 | **延后至 Iteration 008**（002.5 决策） |
+| arm-none-eabi-gcc | 固件交叉编译 | **Iteration 002.5 起启用**；Mac 侧已装（brew，用于交叉编译预检）；烧录在 Windows 侧（ST-Link） |
 
 ## 命令行入口（全部不依赖 IDE）
 
@@ -22,18 +22,49 @@ cmake --build --preset host
 ctest --preset host
 ```
 
-预期：全部用例通过，退出码 0（当前 43 个用例，含 000 smoke 回归与 001 的 22 例）。
+预期：全部用例通过，退出码 0（当前 **44** 个用例：000 smoke 1 + 001 的 22 + 002 的 22，其中 scheduler 10 / health_monitor 12）。
 
-## 固件 target（预留，暂不构建）
+## 固件 target（Iteration 002.5 起启用）
 
-交叉 target `robotcar01_fw` 默认 OFF。待 Iteration 002.5/008 安装
-`arm-none-eabi-gcc` 并接入 CubeMX/HAL 生成代码后启用：
+交叉 target `robotcar01_fw` 默认 OFF。002.5 起启用：HAL/CMSIS 以 **vendor 源码**引入
+（不使用 CubeMX 生成物），fw 入口为 `platform_stm32/main_stm32.cc`。命令以 CMake preset 固化
+（`cmake --preset fw && cmake --build --preset fw`，见 `CMakePresets.json`）；等价的手工命令为：
 
 ```bash
 cmake -S . -B build/fw -DROBOTCAR01_BUILD_FW=ON \
-  -DCMAKE_TOOLCHAIN_FILE=cmake/arm-none-eabi.cmake
+  -DCMAKE_TOOLCHAIN_FILE="$PWD/cmake/arm-none-eabi.cmake"
 cmake --build build/fw
 ```
+
+## 分支与 PR 流程（GitHub stacked PR，自 Iteration 002.5 起）
+
+**硬规则：不得把迭代分支直接合并/推送到 `main`。** 每轮迭代一条分支 + 一个 PR，PR 的 base 指向
+**上一轮迭代的分支**，形成一条 stack；只有最底层的 PR 才以 `main` 为 base。
+
+当前 stack（GitHub stack #3）：
+
+```text
+main
+└── iteration-002-clock-and-scheduler   → PR #1
+    └── iteration-002.5-minimal-bringup → PR #2   ← 当前
+```
+
+分支命名：`iteration-<序号>-<owner-module>`（如 `iteration-003-command-and-feedback`）。
+
+常用命令（需 `gh` 已认证；`gh extension install github/gh-stack` 一次即可）：
+
+```bash
+gh stack view                      # 查看当前 stack
+gh stack checkout <PR号|分支名>     # 检出并挂载本地 tracking
+gh stack add <新分支>               # 在当前栈顶再叠一层（自动置于当前分支之上）
+gh stack submit                    # 推送并创建/更新整条 stack 的 PR
+gh stack sync                      # 与远端同步（底层合并后自动 rebase/retarget）
+gh stack rebase                    # 手动重排/变基
+```
+
+约定：新迭代分支应从**上一轮分支的 head** 切出（不要从 main 切），并设置
+`git config branch.<新分支>.gh-merge-base <上一轮分支>`，这样 `gh pr create` 会自动使用正确的 base。
+合并顺序自底向上；底层 PR 合并后，上层 PR 的 base 由 GitHub/gh stack 自动改指 `main`。
 
 ## 目录约定
 
