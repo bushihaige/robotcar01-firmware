@@ -136,7 +136,8 @@ TEST(FeedbackTest, DiagFrameRoundTripAndTruncation) {
   command_stats.stale_frames = 1;
   command_stats.session_resets = 1;
   const FeedbackDiagPayload payload =
-      AssembleDiagPayload(&tasks, stats, command_stats, ring, /*limits_config_valid=*/true, 12345);
+      AssembleDiagPayload(&tasks, stats, command_stats, ring, /*limits_config_valid=*/true,
+                          /*encoder_stats=*/nullptr, 12345);
   EXPECT_EQ(payload.task_count, kMaxDiagTaskSlots);
   EXPECT_EQ(payload.dropped_task_count, 10u - kMaxDiagTaskSlots);
   EXPECT_EQ(payload.command_accepted, 5u);

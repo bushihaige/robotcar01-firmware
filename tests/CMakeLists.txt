@@ -12,6 +12,8 @@ add_executable(robotcar01_tests
   byte_ring_test.cc
   command_manager_test.cc
   feedback_test.cc
+  wheel_state_test.cc
+  encoder_estimator_test.cc
 )
 
 target_compile_options(robotcar01_tests PRIVATE -Wall -Wextra -Werror)
@@ -19,6 +21,7 @@ target_compile_options(robotcar01_tests PRIVATE -Wall -Wextra -Werror)
 target_link_libraries(robotcar01_tests PRIVATE
   GTest::gtest_main GTest::gtest
   robotcar01_protocol
+  robotcar01_encoder
 )
 target_include_directories(robotcar01_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../host_fakes)
 
