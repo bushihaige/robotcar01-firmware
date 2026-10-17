@@ -17,6 +17,9 @@
 #include <string>
 #include <vector>
 
+#include "app/chassis/safety_gate.h"
+#include "app/control/output_arbitration.h"
+#include "app/control/wheel_speed_controller.h"
 #include "app/encoder/encoder_config.h"
 #include "app/encoder/encoder_estimator.h"
 #include "app/encoder/wheel_state.h"
@@ -189,6 +192,33 @@ int main(int argc, char** argv) {
   kinematics_config.degraded_max_wheel_speed_mps = options.kin_degraded_wheel_mps;
   const bool kinematics_ready = kinematics.Init(kinematics_config);
   robotcar01::chassis::WheelTarget cached_target{};
+
+  // 轮速控制与输出仲裁（006）：每 5 行（5 ms）控制一次，每行（1 ms）仲裁一次；
+  // PWM 写入 ToolPwmSink（只记录最后一次输出与非零计数），作为"唯一写入口"的端到端观测。
+  struct ToolPwmSink : robotcar01::control::PwmSink {
+    robotcar01::control::MotorOutputRequest left{};
+    robotcar01::control::MotorOutputRequest right{};
+    uint32_t applies = 0;
+    uint32_t nonzero_applies = 0;
+    robotcar01::control::PwmApplyStatus Apply(const robotcar01::control::MotorOutputRequest& l,
+                                              const robotcar01::control::MotorOutputRequest& r) override {
+      left = l;
+      right = r;
+      ++applies;
+      if (l.duty_permille > 0u || r.duty_permille > 0u) ++nonzero_applies;
+      return {};
+    }
+  };
+  ToolPwmSink pwm_sink;
+  robotcar01::control::WheelSpeedController left_controller;
+  robotcar01::control::WheelSpeedController right_controller;
+  robotcar01::control::OutputArbitration arbitration;
+  const bool control_ready = kinematics_ready && encoder_ready &&
+                             left_controller.Init(robotcar01::control::WheelControllerConfig{}) &&
+                             right_controller.Init(robotcar01::control::WheelControllerConfig{}) &&
+                             arbitration.Init(pwm_sink, robotcar01::control::ArbitrationConfig{});
+  robotcar01::chassis::WheelSpeedRequest speed_request{};
+  bool control_allow_motion = false;
   // 降级注入：把测量固定为"阻塞质量位"（端到端观测 kQualityDegraded 路径，不是真实测量）
   robotcar01::encoder::WheelState degraded_wheel_state{};
   degraded_wheel_state.left.quality = robotcar01::encoder::kQualityHardwareFault;
@@ -267,6 +297,27 @@ int main(int argc, char** argv) {
         kinematics_inputs.measurement = &cached_wheel_state;
       }
       cached_target = kinematics.Update(kinematics_inputs, now_us);
+      control_allow_motion = kinematics_inputs.motion_allowed;
+    }
+
+    // 006：WheelControlTask（5 ms）+ OutputArbitrationTask（1 ms）
+    if (control_ready) {
+      if (lines % 5 == 0) {
+        robotcar01::control::MotorOutputPair pair{};
+        const float lt = cached_target.valid ? cached_target.left_mps : 0.0f;
+        const float rt = cached_target.valid ? cached_target.right_mps : 0.0f;
+        pair.left = left_controller.Update(lt, cached_wheel_state.left, cached_wheel_state.timestamp.us,
+                                           control_allow_motion, encoder_now_us);
+        pair.right = right_controller.Update(rt, cached_wheel_state.right, cached_wheel_state.timestamp.us,
+                                             control_allow_motion, encoder_now_us);
+        pair.produced_at_us = encoder_now_us;
+        arbitration.Submit(pair);
+      }
+      arbitration.Tick(control_allow_motion, encoder_now_us);
+      // 反馈速度域投影（D-006-6）：与当前目标/安全裁决同步刷新，避免首个控制周期前出现未初始化的原因位
+      robotcar01::chassis::SafetyStatus gate{};
+      gate.allow_motion = control_allow_motion;
+      speed_request = robotcar01::chassis::RunSafetyGate(cached_target, gate);
     }
 
     // 反馈发送（限频由 FeedbackLimiter 决定；失败只计数，不影响命令路径）
@@ -278,6 +329,9 @@ int main(int argc, char** argv) {
     }
     if (kinematics_ready) {
       inputs.target = &cached_target;
+    }
+    if (control_ready) {
+      inputs.output = &speed_request;  // 006：仲裁后允许的速度域目标（D-006-5）
     }
     if (limiter.ShouldSendStatus(now_us)) {
       const auto payload = AssembleStatusPayload(inputs, now_us);
@@ -324,6 +378,20 @@ int main(int argc, char** argv) {
                    static_cast<unsigned>(cached_target.limit_reason), kin_stats.updates,
                    kin_stats.ramp_clamped, kin_stats.dt_clamped, kin_stats.quality_degraded,
                    kin_stats.body_limited, kin_stats.wheel_limited);
+    }
+    if (control_ready) {
+      const auto& ls = left_controller.stats();
+      const auto& rs = right_controller.stats();
+      const auto& as = arbitration.stats();
+      std::fprintf(stderr,
+                   "ctrl l_mode=%u l_dir=%u l_duty=%u l_reason=0x%x r_mode=%u r_dir=%u r_duty=%u "
+                   "r_reason=0x%x arb_apply=%u arb_nonzero=%u arb_safety_zero=%u arb_stale_zero=%u "
+                   "arb_fault_zero=%u stop_entries=%u\n",
+                   static_cast<unsigned>(pwm_sink.left.mode), static_cast<unsigned>(pwm_sink.left.direction),
+                   pwm_sink.left.duty_permille, ls.last_reason,
+                   static_cast<unsigned>(pwm_sink.right.mode), static_cast<unsigned>(pwm_sink.right.direction),
+                   pwm_sink.right.duty_permille, rs.last_reason, as.apply_calls, pwm_sink.nonzero_applies,
+                   as.safety_zero, as.stale_zero, as.fault_zero, ls.stopping_entries + rs.stopping_entries);
     }
     if (encoder_ready) {
       const auto wheel = estimator.state();

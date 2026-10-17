@@ -43,6 +43,7 @@ enum EncoderQuality : uint32_t {
 inline constexpr uint32_t kQualityBlockingMask =
     kQualityCountOutOfRange | kQualityTimestampInvalid | kQualityHardwareFault;
 
+
 struct WheelSideState {
   int32_t count_delta = 0;      // 本窗口有符号计数增量（已含方向极性）
   uint32_t dt_us = 0;           // 本窗口采样间隔（µs）
@@ -62,6 +63,15 @@ struct WheelState {
   uint32_t samples_submitted = 0;  // 平台提交次数（含被拒绝）
   uint32_t samples_accepted = 0;   // 被接受次数；二者差值即近期拒绝数（评审 H-6）
 };
+
+// 控制可用性共享谓词（Iteration 006，评审 S5：005/006 共用，不得各自内联）。
+// 可作为闭环反馈 ⇔ 无阻塞质量位 且（本窗口 valid 或 低速累加中沿用上次发布值）。
+inline bool IsTrustworthyForControl(const WheelSideState& side) {
+  if ((side.quality & kQualityBlockingMask) != 0u) {
+    return false;
+  }
+  return side.valid || (side.quality & kQualityAccumulating) != 0u;
+}
 
 // 回绕安全有符号差分。返回 false 表示不可分辨（超半程/恰好半程），out_delta 不可用。
 bool SignedCountDelta(uint32_t now_count, uint32_t prev_count, uint8_t counter_bits,
