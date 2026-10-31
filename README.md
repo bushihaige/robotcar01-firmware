@@ -22,10 +22,13 @@ cmake --build --preset host
 ctest --preset host
 ```
 
-预期：全部用例通过，退出码 0（当前 **169** 个用例：000 smoke 1、001 的 16（kinematics 10 / safety_gate 6；
+预期：全部用例通过，退出码 0（当前 **189** 个用例：000 smoke 1、001 的 16（kinematics 10 / safety_gate 6；
 walking_skeleton 5 例已于 006 退役，由 control_tasks_test 承接）、002 的 22（scheduler 10 / health_monitor 12）、
-003 的 35、004 的 23、005 的 33、006 的 38（wheel_speed_controller 18 / output_arbitration 10 / control_tasks 10），
-另含 `loopback_end_to_end` 端到端用例）。
+003 的 35、004 的 23、005 的 33、006 的 38（wheel_speed_controller 18 / output_arbitration 10 / control_tasks 10）、
+006.5 的 20（平台配置门禁 5 / 零窗口 7 / 看门狗 8），另含 `loopback_end_to_end` 端到端用例）。
+
+> 干净验证命令（不依赖已有 build 目录）：
+> `cmake -S . -B /tmp/rc01_host -DROBOTCAR01_BUILD_FW=OFF -DCMAKE_PREFIX_PATH=/opt/homebrew && cmake --build /tmp/rc01_host -j8 && (cd /tmp/rc01_host && ctest)`
 
 ### 轮速控制与输出仲裁（Iteration 006，`app/control/`）
 
@@ -33,6 +36,44 @@ walking_skeleton 5 例已于 006 退役，由 control_tasks_test 承接）、002
 - `OutputArbitration`：**全仓唯一** `PwmSink::Apply` 调用点（1 ms）；安全禁止 / 请求超龄 / 故障保持 ⇒ 双侧 coast。
 - 调试工具新增 `ctrl ` 统计行（`l_mode/l_dir/l_duty/l_reason ... arb_apply/arb_nonzero/arb_safety_zero/...`）；
   003 线格式不变，状态帧 `output_*` 含义为"仲裁后允许的速度域目标"。006.5 开环标定也必须经 `Submit`。
+
+### 真机电机闭环（Iteration 006.5，`platform_stm32/`）
+
+把 004/005/006 的"假电机"第一次换成真实 STM32F407ZGT6 + IBT-2(BTS7960) + 增量编码器：
+
+- `clock_source`：1 ms SysTick 计数（ISR 单一写者）+ `SysTick->VAL` 亚毫秒余量，回退时钳制保单调
+- `encoder_input`：TIM2(PA0/PA1)/TIM3(PA6/PA7) TI12 编码器模式、`CNT & 0xFFFF`、极性归一化、累计计数诊断
+- `motor_pwm`：`Ibt2PwmSink` —— **EN 控 coast**（IBT-2 双低是制动）、TIM4(PB6–PB9) 四路 20 kHz、方向切换 1 ms 零窗口、
+  `Init` 失败 `ForceSafeState()`、`kMotorRightDirectionInverted` 反相修正
+- `pwm_switch_guard.h` / `pwm_watchdog.h`：零窗口状态机与 **50 ms 主循环监护**（纯函数，host 穷举）
+- `command_console` + `board_app`：单字符命令与调度器/估计器/控制器/仲裁装配；状态行**分帧输出**
+
+**引脚（2026-10-25 工程师现场更正：PB0/PB6/PB7 + PA0/PA1 = 右轮）**
+
+| 功能 | 右轮 | 左轮 |
+|---|---|---|
+| 编码器 (TIM2/TIM3) | PA0/PA1 | PA6/PA7 |
+| RPWM / LPWM (TIM4) | PB6 / PB7 | PB8 / PB9 |
+| IBT-2 EN（R_EN+L_EN） | PB0 | PB1 |
+| 控制台 | USART1 PA9/PA10 @115200 | — |
+
+**串口命令**：`s` 停 / `+` `-` 目标 ±0.05 m/s（自动切闭环）/ `]` `[` 开环占空比 ±10% / `o` 模式切换 /
+`r` 开环换向 / `0 1 2` 轮选择 / `p` 打印状态 / `z` 清基线 / `i` 配置回显 / `x` 主循环停摆自测 /
+`e` 编码器原始诊断 / `g` GPIO 扫描。
+
+**实测结论（右轮，空载）**：CPR 3920.4 counts/圈（占位 3960）；开环 9 档 53→601 mm/s（增益 66.4 mm/s/100‰、
+死区 100‰、kff≈1506 vs 配置 1600）；闭环 50/100/150/200 → 48/101/153/198（稳态误差 ≤3 mm/s）；
+`kCoast` 58→38→0 约 300–400 ms；主循环监护 `wd` 0→2 / 117 ms。**局限**：左电机/左编码器未接（双轮与差速属 008）；
+CPR/kff 为单次测量、非定标；`kBrake` 未对照；编码器 VCC 用 5 V 未核 FT 标注。
+
+**Windows（Honor PC）交叉构建**：`cmake --preset fw` 不可用（preset 是 Unix Makefiles），须用 Ninja + 绝对 toolchain 路径：
+
+```powershell
+cmake -S <src> -B <src>/build/fw -G Ninja `
+  -DCMAKE_TOOLCHAIN_FILE=<abs path>/cmake/arm-none-eabi.cmake `
+  -DROBOTCAR01_BUILD_FW=ON -DCMAKE_BUILD_TYPE=Debug
+cmake --build <src>/build/fw
+```
 
 ## 固件 target（Iteration 002.5 起启用）
 
