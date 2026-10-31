@@ -11,6 +11,11 @@ set -euo pipefail
 FW_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WS_ROOT="$(cd "$FW_DIR/.." && pwd)"
 REMOTE_PY="$WS_ROOT/.agents/skills/honor-ssh-access/scripts/remote.py"
+HOST="${HONOR_HOST:-192.168.1.19}"   # 2026-10-25 实测地址（旧记录 192.168.1.3 已失效），可用 HONOR_HOST 覆盖
+remote_ps() { python3 "$REMOTE_PY" --host "$HOST" ps "$1"; }
+remote_put() { python3 "$REMOTE_PY" --host "$HOST" put "$1" "$2"; }
+remote_get() { python3 "$REMOTE_PY" --host "$HOST" get "$1" "$2"; }
+
 
 PORT="COM15"
 SECONDS_TO_CAPTURE=15
@@ -31,13 +36,13 @@ REMOTE_PS="$REMOTE_DIR/capture_uart_ps.ps1"
 REMOTE_LOG="$REMOTE_DIR/uart_log.txt"
 
 echo "== 上传采集脚本 =="
-python3 "$REMOTE_PY" ps "New-Item -ItemType Directory -Force -Path 'E:\File\robotcar01_bringup' | Out-Null; 'ok'"
-python3 "$REMOTE_PY" put "$FW_DIR/scripts/capture_uart_ps.ps1" "$REMOTE_PS"
+remote_ps "New-Item -ItemType Directory -Force -Path 'E:\File\robotcar01_bringup' | Out-Null; 'ok'"
+remote_put "$FW_DIR/scripts/capture_uart_ps.ps1" "$REMOTE_PS"
 
 echo "== 远端采集 ${SECONDS_TO_CAPTURE}s on ${PORT}（现在可以复位板子） =="
-python3 "$REMOTE_PY" ps "powershell -ExecutionPolicy Bypass -File '$REMOTE_PS' -Port $PORT -Baud 115200 -Seconds $SECONDS_TO_CAPTURE -Out 'E:\File\robotcar01_bringup\uart_log.txt'"
+remote_ps "powershell -ExecutionPolicy Bypass -File '$REMOTE_PS' -Port $PORT -Baud 115200 -Seconds $SECONDS_TO_CAPTURE -Out 'E:\File\robotcar01_bringup\uart_log.txt'"
 
 echo "== 回传日志 =="
-python3 "$REMOTE_PY" get "$REMOTE_LOG" "$LOCAL_OUT"
+remote_get "$REMOTE_LOG" "$LOCAL_OUT"
 echo "本地日志: $LOCAL_OUT"
 wc -l "$LOCAL_OUT" || true
