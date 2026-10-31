@@ -30,6 +30,17 @@ void UartWriteHex32(uint32_t value);
 void UartWriteLabelU32(const char* label, uint32_t value);
 void UartWriteLabelHex(const char* label, uint32_t value);
 
+// 有符号整数输出（-5 ⇒ "-5"）。
+void UartWriteI32(int32_t value);
+
+// ---- Iteration 006.5：RX 单字节中断接收（命令通道） ----
+// 启动中断接收（USART1_IRQn，优先级 5）；失败返回 false。
+bool UartConsoleStartRx();
+// 取一个已收到的字节；无数据返回 false。
+bool UartConsolePopByte(uint8_t& out);
+// RX 环溢出计数（诊断）。
+uint32_t UartConsoleRxOverflowCount();
+
 }  // namespace robotcar01::platform
 
 #endif  // ROBOTCAR01_PLATFORM_STM32_UART_CONSOLE_H_

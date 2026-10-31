@@ -152,14 +152,14 @@ MotorOutputRequest WheelSpeedController::Update(float target_mps,
     LeaveDrive();
     stop_dwell_accum_us_ = 0;
     return Finish(CoastRequest(kOutputMeasurementInvalid |
-                               (state_ == ControlState::kStopping ? kOutputStopping : 0u)));
+                               (state_ == ControlState::kStopping ? kOutputStopping : kOutputNone)));
   }
   if (!fresh) {
     ++stats_.measurement_stale_cycles;
     LeaveDrive();
     stop_dwell_accum_us_ = 0;
     return Finish(CoastRequest(kOutputMeasurementStale |
-                               (state_ == ControlState::kStopping ? kOutputStopping : 0u)));
+                               (state_ == ControlState::kStopping ? kOutputStopping : kOutputNone)));
   }
 
   // ④ 目标归一
@@ -183,7 +183,7 @@ MotorOutputRequest WheelSpeedController::Update(float target_mps,
   if (stall_fault_) {
     LeaveDrive();
     MotorOutputRequest out = CoastRequest(kOutputStallFault |
-                                          (state_ == ControlState::kStopping ? kOutputStopping : 0u));
+                                          (state_ == ControlState::kStopping ? kOutputStopping : kOutputNone));
     out.fault = true;
     return Finish(out);
   }

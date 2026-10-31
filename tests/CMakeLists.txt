@@ -17,6 +17,9 @@ add_executable(robotcar01_tests
   wheel_speed_controller_test.cc
   output_arbitration_test.cc
   control_tasks_test.cc
+  platform_config_test.cc
+  pwm_switch_guard_test.cc
+  pwm_watchdog_test.cc
 )
 
 target_compile_options(robotcar01_tests PRIVATE -Wall -Wextra -Werror)

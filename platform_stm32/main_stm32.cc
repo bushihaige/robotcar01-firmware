@@ -1,13 +1,16 @@
-// RobotCar01 固件入口（Iteration 002.5 最小编译单元）
+// RobotCar01 固件入口（Iteration 002.5 最小启动 → 006.5 电机闭环装配）
 //
-// 启动链（详设 §生命周期）：
+// 启动链（详设 §6）：
 //   Reset → SystemInit(vendor) → main → HAL_Init(SysTick 1ms) → ClockInit(168MHz)
-//   → UartConsoleInit(USART1 PA9/PA10 @115200) → 横幅（运行时实测值）→ 1s 心跳
+//   → UartConsoleInit(USART1 PA9/PA10 @115200) → 横幅（运行时实测值）
+//   → BoardApp::Init（编码器/PWM/仲裁/任务表；失败则 EN 保持失能）
+//   → 主循环 { scheduler.TickLoopOnce + 命令 + 状态行 } + 1s 心跳
 //
 // 本文件承担 fw 入口（原 app/main.cc 占位成为孤儿，B-2.5-1）。
-// 本迭代不含调度器与任何业务逻辑（INV-2.5-4）。
 
+#include "platform_stm32/board_app.h"
 #include "platform_stm32/clock_init.h"
+#include "platform_stm32/clock_source.h"
 #include "platform_stm32/diag.h"
 #include "platform_stm32/platform_config.h"
 #include "platform_stm32/uart_console.h"
@@ -18,7 +21,13 @@ using robotcar01::platform::ClockStage;
 
 // HAL 不提供 SysTick_Handler（HAL 源码中无该符号），必须由应用实现，
 // 否则 HAL_GetTick() 永不推进、心跳与所有超时都会失效（评审 C-5 关注点之一）。
-extern "C" void SysTick_Handler(void) { HAL_IncTick(); }
+// 006.5：同一次 1 ms 中断里推进 mcu_os_lite 的微秒时基（ISR 内只做 ++）。
+extern "C" void SysTick_Handler(void) {
+  HAL_IncTick();
+  robotcar01::platform::SysTickClockSource::OnTickFromIsr();
+  // 主循环独立监护（INV-006.5-6）：主循环卡死时在这里把电机断电
+  robotcar01::platform::MotorWatchdogTickFromIsr();
+}
 
 namespace {
 
@@ -104,6 +113,7 @@ int main(void) {
   HAL_Init();
 
   const ClockResult clock = robotcar01::platform::ClockInit();
+  robotcar01::platform::SysTickClockSource::Reset();
 
   // 即使时钟降级也要建立可打印通路：HAL_RCC_GetPCLK2Freq() 会按当前实际时钟算 BRR，
   // 因此 HSI 16MHz 下 115200 依旧可读（评审 C-6 的可观测降级设计）。
@@ -115,9 +125,26 @@ int main(void) {
                                                  clock.hal_code);
   }
 
+  // 静态存储：避免把整个装配（栈上数 KB）放在 main 的栈帧里。
+  static robotcar01::platform::BoardApp app;
+  if (!app.Init()) {
+    robotcar01::platform::UartWriteLine("");
+    robotcar01::platform::UartWrite("[FATAL] app init failed: ");
+    robotcar01::platform::UartWriteLine(app.last_error());
+    robotcar01::platform::UartWriteLine("motor output stays DISABLED (EN=0, CCR=0)");
+    // 不进入主循环：调度器未运行 ⇒ 没有 Submit ⇒ Apply 永不被调用 ⇒ EN 保持失能。
+    for (;;) {
+    }
+  }
+
+  robotcar01::platform::UartWriteLine("");
+  robotcar01::platform::UartWriteLine("=== RobotCar01 motor loop on board (Iteration 006.5) ===");
+  app.PrintHelp();
+
   uint32_t heartbeat = 0U;
   uint32_t next_due_ms = HAL_GetTick() + robotcar01::platform::kHeartbeatPeriodMs;
   for (;;) {
+    app.Step();
     if (static_cast<int32_t>(HAL_GetTick() - next_due_ms) >= 0) {
       next_due_ms += robotcar01::platform::kHeartbeatPeriodMs;
       ++heartbeat;
@@ -125,6 +152,8 @@ int main(void) {
       robotcar01::platform::UartWriteU32(heartbeat);
       robotcar01::platform::UartWrite(" tick=");
       robotcar01::platform::UartWriteU32(HAL_GetTick());
+      robotcar01::platform::UartWrite(" sched=");
+      robotcar01::platform::UartWriteU32(app.SchedulerTick());
       robotcar01::platform::UartWrite(" assert=");
       robotcar01::platform::UartWriteU32(robotcar01::platform::DiagAssertCount());
       robotcar01::platform::UartWriteLine("");
