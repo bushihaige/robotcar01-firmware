@@ -160,7 +160,8 @@ def check_blocked_path(binary: str) -> tuple[bool, str]:
     stdin = "\n".join(lines) + "\n"
     completed = subprocess.run([binary, "--frames", str(len(lines)),
                                 "--status-period-ms", str(STATUS_PERIOD_MS),
-                                "--kin-block-motion"],
+                                "--kin-block-motion",
+                                "--encoder-left-mps", "0.4", "--encoder-right-mps", "0.4"],
                                input=stdin.encode(), stdout=subprocess.PIPE,
                                stderr=subprocess.PIPE, check=False)
     if completed.returncode != 0:
@@ -180,7 +181,17 @@ def check_blocked_path(binary: str) -> tuple[bool, str]:
             return False, f"blocked run produced target_scale {status['target_scale']}"
         if not (status["limit_reason"] & REASON_SAFETY):
             return False, f"blocked run missing kSafety (limit_reason=0x{status['limit_reason']:x})"
-    return True, f"blocked frames={len(statuses)}"
+    # 006 A6 端到端：安全禁止段 PWM 全程为零（仲裁唯一写入口，每 1 ms 一次 Apply）
+    blocked_stderr = completed.stderr.decode("utf-8", "replace")
+    ctrl_lines = [l for l in blocked_stderr.splitlines() if l.startswith("ctrl ")]
+    if not ctrl_lines:
+        return False, "blocked run produced no ctrl statistics line"
+    ctrl = dict(p.split("=", 1) for p in ctrl_lines[-1].split() if "=" in p)
+    if int(ctrl["arb_nonzero"]) != 0:
+        return False, f"blocked run applied non-zero PWM: {ctrl_lines[-1]}"
+    if int(ctrl["arb_safety_zero"]) != int(ctrl["arb_apply"]) or int(ctrl["arb_apply"]) != len(lines):
+        return False, f"blocked run: every tick must be a safety zero apply: {ctrl_lines[-1]}"
+    return True, f"blocked frames={len(statuses)}, pwm applies={ctrl['arb_apply']} all zero"
 
 
 def check_degraded_path(binary: str) -> tuple[bool, str]:
@@ -355,6 +366,20 @@ def main() -> int:
         print("FAIL: no encoder statistics line on stderr", file=sys.stderr)
         return 1
 
+    # 006 A8 端到端：控制器 + 仲裁产生非零 PWM，且每行（1 ms）恰好一次 Apply
+    ctrl_lines = [line for line in stderr_text.splitlines() if line.startswith("ctrl ")]
+    if not ctrl_lines:
+        print("FAIL: no ctrl statistics line on stderr (006 wiring)", file=sys.stderr)
+        return 1
+    ctrl = dict(part.split("=", 1) for part in ctrl_lines[-1].split() if "=" in part)
+    if int(ctrl["arb_nonzero"]) == 0:
+        print(f"FAIL: control path never produced non-zero PWM: {ctrl_lines[-1]}", file=sys.stderr)
+        return 1
+    if int(ctrl["arb_apply"]) != len(ctrl_lines):
+        print(f"FAIL: arbitration apply count {ctrl['arb_apply']} != ticks {len(ctrl_lines)}",
+              file=sys.stderr)
+        return 1
+
     accel_frames = [s for s in statuses if s["limit_reason"] & REASON_ACCEL_LIMIT]
     if len(accel_frames) < 2:
         print(f"FAIL: expected at least 2 status frames with kAccelLimit (ramp actually observed), "
@@ -375,7 +400,8 @@ def main() -> int:
           f"(types={[hex(t) for t in sorted(set(types))]}), status frames={len(statuses)}, "
           f"target reached {KIN_COMMAND_MPS} m/s and scale {KIN_EXPECTED_SCALE:.2f} under "
           f"over-limit command, ramp bound {ramp_bound:.4f} respected, "
-          f"accel-flagged frames={len(accel_frames)}; blocked/degraded paths verified")
+          f"accel-flagged frames={len(accel_frames)}; pwm non-zero applies={ctrl['arb_nonzero']}; "
+          f"blocked/degraded paths verified ({blocked_detail})")
     return 0
 
 

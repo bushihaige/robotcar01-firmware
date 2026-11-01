@@ -66,7 +66,9 @@ WheelSideState EstimateSide(const WheelSideInputs& inputs) {
   const float dt_s = static_cast<float>(state.dt_us) / 1'000'000.0f;
   const float raw = state.position_delta_m / dt_s;
 
-  if (state.quality != kQualityValid) {
+  // 只有阻塞质量位才使本窗口不产出速度（Iteration 006 集成测试发现的 004 缺陷修复）：
+  // kQualityLowSpeedTimeout 等信息位不得阻止到期发布（D-004-9：到期发布按判零阈值决断）。
+  if ((state.quality & kQualityBlockingMask) != 0u) {
     return state;  // 质量差：不产出速度
   }
 

@@ -22,10 +22,17 @@ cmake --build --preset host
 ctest --preset host
 ```
 
-预期：全部用例通过，退出码 0（当前 **136** 个用例：000 smoke 1、001 的 21（kinematics 10 / safety_gate 6 /
-walking_skeleton 5）、002 的 22（scheduler 10 / health_monitor 12）、003 的 35、004 的 23、005 的 33
-（differential_kinematics 27 / body_state 3 / motion_desired 1 / feedback 新增 2），另含 `loopback_end_to_end`
-端到端用例）。
+预期：全部用例通过，退出码 0（当前 **169** 个用例：000 smoke 1、001 的 16（kinematics 10 / safety_gate 6；
+walking_skeleton 5 例已于 006 退役，由 control_tasks_test 承接）、002 的 22（scheduler 10 / health_monitor 12）、
+003 的 35、004 的 23、005 的 33、006 的 38（wheel_speed_controller 18 / output_arbitration 10 / control_tasks 10），
+另含 `loopback_end_to_end` 端到端用例）。
+
+### 轮速控制与输出仲裁（Iteration 006，`app/control/`）
+
+- `WheelSpeedController`：幅值域 FF+PI、条件积分、停滞起步上限与停滞超时故障、方向锁存（只在测量确认停止后释放）。
+- `OutputArbitration`：**全仓唯一** `PwmSink::Apply` 调用点（1 ms）；安全禁止 / 请求超龄 / 故障保持 ⇒ 双侧 coast。
+- 调试工具新增 `ctrl ` 统计行（`l_mode/l_dir/l_duty/l_reason ... arb_apply/arb_nonzero/arb_safety_zero/...`）；
+  003 线格式不变，状态帧 `output_*` 含义为"仲裁后允许的速度域目标"。006.5 开环标定也必须经 `Submit`。
 
 ## 固件 target（Iteration 002.5 起启用）
 

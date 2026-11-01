@@ -4,7 +4,6 @@ add_executable(robotcar01_tests
   smoke_test.cc
   kinematics_test.cc
   safety_gate_test.cc
-  walking_skeleton_test.cc
   scheduler_test.cc
   health_monitor_test.cc
   protocol_frame_test.cc
@@ -15,6 +14,9 @@ add_executable(robotcar01_tests
   wheel_state_test.cc
   encoder_estimator_test.cc
   differential_kinematics_test.cc
+  wheel_speed_controller_test.cc
+  output_arbitration_test.cc
+  control_tasks_test.cc
 )
 
 target_compile_options(robotcar01_tests PRIVATE -Wall -Wextra -Werror)
@@ -23,6 +25,7 @@ target_link_libraries(robotcar01_tests PRIVATE
   GTest::gtest_main GTest::gtest
   robotcar01_protocol
   robotcar01_kinematics
+  robotcar01_control
 )
 target_include_directories(robotcar01_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../host_fakes)
 

@@ -84,7 +84,6 @@ else()
   add_library(robotcar01_chassis STATIC
     app/chassis/kinematics.cc
     app/chassis/safety_gate.cc
-    app/chassis/walking_skeleton.cc
   )
   target_include_directories(robotcar01_chassis PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_compile_options(robotcar01_chassis PRIVATE -Wall -Wextra -Werror)
@@ -129,6 +128,19 @@ else()
   target_include_directories(robotcar01_kinematics PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
   target_compile_options(robotcar01_kinematics PRIVATE -Wall -Wextra -Werror)
   target_link_libraries(robotcar01_kinematics PUBLIC robotcar01_chassis robotcar01_encoder)
+
+  # --- 轮速控制与输出仲裁库（006）：依赖 chassis/encoder/mcu_os_lite，不依赖 protocol ---
+  set(ROBOTCAR01_CONTROL_SOURCES
+    app/control/controller_config.cc
+    app/control/wheel_speed_controller.cc
+    app/control/output_arbitration.cc
+    app/control/control_tasks.cc
+  )
+  add_library(robotcar01_control STATIC ${ROBOTCAR01_CONTROL_SOURCES})
+  target_include_directories(robotcar01_control PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+  target_compile_options(robotcar01_control PRIVATE -Wall -Wextra -Werror)
+  target_link_libraries(robotcar01_control PUBLIC robotcar01_chassis robotcar01_encoder
+                                               robotcar01_mcu_os_lite)
 
   add_library(robotcar01_protocol STATIC ${ROBOTCAR01_PROTOCOL_SOURCES})
   target_include_directories(robotcar01_protocol PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
