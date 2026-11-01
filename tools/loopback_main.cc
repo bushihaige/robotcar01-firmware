@@ -19,11 +19,14 @@
 
 #include "app/encoder/encoder_config.h"
 #include "app/encoder/encoder_estimator.h"
+#include "app/encoder/wheel_state.h"
+#include "app/kinematics/differential_kinematics.h"
 #include "app/protocol/byte_ring.h"
 #include "app/protocol/command_manager.h"
 #include "app/protocol/decoder.h"
 #include "app/protocol/feedback.h"
 #include "app/protocol/feedback_limiter.h"
+#include "app/protocol/motion_desired.h"
 #include "app/protocol/protocol_constants.h"
 #include "app/protocol/session.h"
 
@@ -39,6 +42,10 @@ using robotcar01::protocol::CommandLeaseConfig;
 using robotcar01::protocol::CommandLimits;
 using robotcar01::protocol::CommandManager;
 using robotcar01::protocol::CommandSnapshot;
+using robotcar01::kinematics::DifferentialKinematics;
+using robotcar01::kinematics::KinematicsConfig;
+using robotcar01::kinematics::KinematicsInputs;
+using robotcar01::protocol::MakeMotionDesired;
 using robotcar01::protocol::DecodeStatus;
 using robotcar01::protocol::EncodeDiagFrame;
 using robotcar01::protocol::EncodeStatusFrame;
@@ -53,6 +60,12 @@ struct Options {
   float encoder_left_mps = 0.0f;   // 注入的虚拟左轮速（0 = 不注入编码器样本）
   float encoder_right_mps = 0.0f;
   bool encoder_enabled = false;
+  // 005：运动学注入参数（默认值与 KinematicsConfig 一致；脚本可显式覆盖）
+  float kin_accel_mps2 = 0.5f;
+  float kin_decel_mps2 = 0.8f;
+  float kin_degraded_wheel_mps = 0.2f;
+  bool kin_degrade_quality = false;  // 注入阻塞质量位，用于端到端观测降级路径（005 A7）
+  bool kin_block_motion = false;     // 注入 allow_motion=false，用于端到端观测安全禁止路径（005 A6）
   uint32_t status_period_ms = 20;
   uint32_t diag_period_ms = 100;
   uint32_t lease_ms = 300;
@@ -111,11 +124,23 @@ int main(int argc, char** argv) {
     } else if (arg == "--encoder-right-mps" && has_next) {
       options.encoder_right_mps = std::strtof(argv[++i], nullptr);
       options.encoder_enabled = true;
+    } else if (arg == "--kin-accel-mps2" && has_next) {
+      options.kin_accel_mps2 = std::strtof(argv[++i], nullptr);
+    } else if (arg == "--kin-decel-mps2" && has_next) {
+      options.kin_decel_mps2 = std::strtof(argv[++i], nullptr);
+    } else if (arg == "--kin-degraded-wheel-mps" && has_next) {
+      options.kin_degraded_wheel_mps = std::strtof(argv[++i], nullptr);
+    } else if (arg == "--kin-degrade-quality") {
+      options.kin_degrade_quality = true;
+    } else if (arg == "--kin-block-motion") {
+      options.kin_block_motion = true;
     } else if (arg == "--help" || arg == "-h") {
       std::fprintf(stderr,
                    "usage: robotcar01_loopback [--frames N] [--status-period-ms X] "
                    "[--diag-period-ms Y] [--lease-ms Z] "
                    "[--encoder-left-mps A] [--encoder-right-mps B]\n"
+                   "[--kin-accel-mps2 X] [--kin-decel-mps2 Y] [--kin-degraded-wheel-mps Z] "
+                   "[--kin-degrade-quality] [--kin-block-motion]\n"
                    "stdin: one hex-encoded command frame per line\n"
                    "stdout: binary feedback frames\n");
       return 0;
@@ -156,6 +181,19 @@ int main(int argc, char** argv) {
     encoder_config.max_wheel_speed_mps = 0.5f;
     encoder_ready = estimator.Init(encoder_config);
   }
+  // 运动学（005）：几何与域上限取"宿主调试配置"（与 001 默认一致；真机由应用配置注入）
+  DifferentialKinematics kinematics;
+  KinematicsConfig kinematics_config{};
+  kinematics_config.max_body_accel_mps2 = options.kin_accel_mps2;
+  kinematics_config.max_body_decel_mps2 = options.kin_decel_mps2;
+  kinematics_config.degraded_max_wheel_speed_mps = options.kin_degraded_wheel_mps;
+  const bool kinematics_ready = kinematics.Init(kinematics_config);
+  robotcar01::chassis::WheelTarget cached_target{};
+  // 降级注入：把测量固定为"阻塞质量位"（端到端观测 kQualityDegraded 路径，不是真实测量）
+  robotcar01::encoder::WheelState degraded_wheel_state{};
+  degraded_wheel_state.left.quality = robotcar01::encoder::kQualityHardwareFault;
+  degraded_wheel_state.right.quality = robotcar01::encoder::kQualityHardwareFault;
+
   uint32_t encoder_left_count = 0;
   uint32_t encoder_right_count = 0;
   uint64_t encoder_now_us = 0;  // 编码器窗口独立时基（每行 = 5 ms 窗口，确定性）
@@ -210,14 +248,36 @@ int main(int argc, char** argv) {
       estimator.OnSample(encoder_snapshot, false);
     }
 
+    // 运动学（005）：命令快照 → motion_desired → WheelTarget（每行 = 1 ms 虚拟时钟）
+    // 先刷新测量快照，保证同一周期内"测量 → 运动学 → 反馈"使用同一个 WheelState。
+    if (encoder_ready) {
+      cached_wheel_state = estimator.state();
+    }
+    if (kinematics_ready) {
+      const CommandSnapshot effective = manager.EffectiveSnapshot(now_us);
+      KinematicsInputs kinematics_inputs{};
+      kinematics_inputs.command = effective.command;
+      // 本工具不含安全状态机（007）：默认允许运动，可用 --kin-block-motion 注入安全禁止路径。
+      robotcar01::chassis::SafetyStatus safety{};
+      safety.allow_motion = !options.kin_block_motion;
+      kinematics_inputs.motion_allowed = MakeMotionDesired(effective, now_us, safety);
+      if (options.kin_degrade_quality) {
+        kinematics_inputs.measurement = &degraded_wheel_state;
+      } else if (encoder_ready) {
+        kinematics_inputs.measurement = &cached_wheel_state;
+      }
+      cached_target = kinematics.Update(kinematics_inputs, now_us);
+    }
+
     // 反馈发送（限频由 FeedbackLimiter 决定；失败只计数，不影响命令路径）
     FeedbackInputs inputs{};
     const CommandSnapshot snapshot = manager.snapshot();  // 按值持有，避免悬垂引用
     inputs.command = &snapshot;
     if (encoder_ready) {
-      const auto wheel_state = estimator.state();
-      cached_wheel_state = wheel_state;
       inputs.wheel_state = &cached_wheel_state;
+    }
+    if (kinematics_ready) {
+      inputs.target = &cached_target;
     }
     if (limiter.ShouldSendStatus(now_us)) {
       const auto payload = AssembleStatusPayload(inputs, now_us);
@@ -255,6 +315,16 @@ int main(int argc, char** argv) {
                  manager.stats().suspended_rejected, manager.stats().run_requests_ignored,
                  manager.snapshot().armed ? 1u : 0u, manager.snapshot().run_requested ? 1u : 0u,
                  ring.statistics().overflow_drop_bytes);
+    if (kinematics_ready) {
+      const auto& kin_stats = kinematics.stats();
+      std::fprintf(stderr,
+                   "kin target_left=%.4f target_right=%.4f scale=%.4f reason=0x%x updates=%u "
+                   "ramp_clamped=%u dt_clamped=%u degraded=%u body_limited=%u wheel_limited=%u\n",
+                   cached_target.left_mps, cached_target.right_mps, cached_target.scale,
+                   static_cast<unsigned>(cached_target.limit_reason), kin_stats.updates,
+                   kin_stats.ramp_clamped, kin_stats.dt_clamped, kin_stats.quality_degraded,
+                   kin_stats.body_limited, kin_stats.wheel_limited);
+    }
     if (encoder_ready) {
       const auto wheel = estimator.state();
       std::fprintf(stderr, "encoder left_mps=%.4f right_mps=%.4f left_valid=%u right_valid=%u "

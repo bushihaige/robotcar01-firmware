@@ -20,6 +20,9 @@ enum class LimitReason : uint32_t {
   kBodySpeed  = 0x02,  // 车体 v/ω 域约束生效（统一比例缩放）
   kWheelSpeed = 0x04,  // 轮速域约束生效（统一比例缩放）
   kSafety     = 0x08,  // allow_motion=false / 安全禁止
+  // --- Iteration 005 追加（不改既有位值；受控扩展，详设 §5.5）---
+  kAccelLimit      = 0x10,  // 车体域加减速约束生效（目标正被斜坡平滑，斜坡期间持续置位）
+  kQualityDegraded = 0x20,  // 测量不可信 ⇒ 降级轮速上限实际限制了输出（D-005-7）
 };
 
 // 上位机运动意图（001 最小字段集）。

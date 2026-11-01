@@ -21,7 +21,9 @@ enum StatusOffset : size_t {
   kOutputRight = 40,
   kMeasuredLeft = 44,
   kMeasuredRight = 48,
-  kStatusReserved = 52,
+  kTargetScale = 52,          // 005：原 reserved[0] 语义化为 WheelTarget::scale（长度不变）
+  kEncoderQualityLeft = 56,   // 005：004 详设指派的逐侧质量位，本轮落地
+  kEncoderQualityRight = 60,
 };
 
 // 诊断帧载荷字段偏移（小端）：104 B 统计与装配 + 6×12 B 任务槽 = 176 B
@@ -63,7 +65,7 @@ enum DiagOffset : size_t {
 // 编译期校验：偏移表与字段总长必须恰好等于声明的诊断载荷长度（防止再次出现长度/偏移不一致）。
 static_assert(kTasksFirst + kMaxDiagTaskSlots * kDiagTaskEntryBytes == kDiagPayloadBytes,
               "diag payload offsets must exactly fill kDiagPayloadBytes");
-static_assert(kStatusReserved + 3 * sizeof(uint32_t) == kStatusPayloadBytes,
+static_assert(kEncoderQualityRight + sizeof(uint32_t) == kStatusPayloadBytes,
               "status payload offsets must exactly fill kStatusPayloadBytes");
 
 constexpr uint32_t kDiagFlagTruncated = 1u << 0;
@@ -148,6 +150,10 @@ FeedbackStatusPayload AssembleStatusPayload(const FeedbackInputs& inputs, uint64
     valid |= kFlagTargetValid;
     payload.target_left_mps = inputs.target->left_mps;
     payload.target_right_mps = inputs.target->right_mps;
+    // 005：域限幅比例直达（不含斜坡，D-005-6）；无数据源时写 0 而非默认 1.0。
+    payload.target_scale = inputs.target->scale;
+  } else {
+    payload.target_scale = 0.0f;
   }
   if (has_output) {
     if (inputs.output->force_disable) {
@@ -169,9 +175,11 @@ FeedbackStatusPayload AssembleStatusPayload(const FeedbackInputs& inputs, uint64
   //   measured_*       仅在 kFlagSpeedValid 时写入真实值，否则写 0
   if (inputs.wheel_state != nullptr) {
     const encoder::WheelState& wheel = *inputs.wheel_state;
-    const uint32_t blocking = encoder::kQualityCountOutOfRange |
-                             encoder::kQualityTimestampInvalid |
-                             encoder::kQualityHardwareFault;
+    // 005：逐侧质量位直达状态帧（004 详设的指派，005 落地补齐）
+    payload.encoder_quality_left = wheel.left.quality;
+    payload.encoder_quality_right = wheel.right.quality;
+    // 阻塞掩码的唯一定义在 app/encoder/wheel_state.h（005 D-005-8，单一真源）
+    const uint32_t blocking = encoder::kQualityBlockingMask;
     const bool encoder_ok = (wheel.left.quality & blocking) == 0u &&
                             (wheel.right.quality & blocking) == 0u;
     if (encoder_ok) {
@@ -272,9 +280,9 @@ size_t EncodeStatusFrame(const FeedbackStatusPayload& payload, uint32_t seq, uin
   PutLe32(body + kOutputRight, FloatBits(payload.output_right_mps));
   PutLe32(body + kMeasuredLeft, FloatBits(payload.measured_left_mps));
   PutLe32(body + kMeasuredRight, FloatBits(payload.measured_right_mps));
-  for (size_t i = 0; i < 3; ++i) {
-    PutLe32(body + kStatusReserved + i * 4, payload.reserved[i]);
-  }
+  PutLe32(body + kTargetScale, FloatBits(payload.target_scale));
+  PutLe32(body + kEncoderQualityLeft, payload.encoder_quality_left);
+  PutLe32(body + kEncoderQualityRight, payload.encoder_quality_right);
   return AssembleFeedbackFrame(static_cast<uint8_t>(MessageType::kFeedbackStatus), body,
                                kStatusPayloadBytes, seq, out, out_capacity);
 }
@@ -342,9 +350,9 @@ bool DecodeStatusPayload(const DecodedFrame& frame, FeedbackStatusPayload& out) 
   result.output_right_mps = BitsToFloat(GetLe32(body + kOutputRight));
   result.measured_left_mps = BitsToFloat(GetLe32(body + kMeasuredLeft));
   result.measured_right_mps = BitsToFloat(GetLe32(body + kMeasuredRight));
-  for (size_t i = 0; i < 3; ++i) {
-    result.reserved[i] = GetLe32(body + kStatusReserved + i * 4);
-  }
+  result.target_scale = BitsToFloat(GetLe32(body + kTargetScale));
+  result.encoder_quality_left = GetLe32(body + kEncoderQualityLeft);
+  result.encoder_quality_right = GetLe32(body + kEncoderQualityRight);
   out = result;
   return true;
 }

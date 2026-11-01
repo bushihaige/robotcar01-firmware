@@ -35,6 +35,14 @@ enum EncoderQuality : uint32_t {
   kQualityNoCountChange = 1u << 6,     // 未要求运动期间计数不变（纯观测；不得单独判为断线）
 };
 
+// 阻塞质量位掩码（唯一真源，Iteration 005 D-005-8）：任一位出现即表示"本窗口轮速不可作为
+// 可信测量"。消费方（005 运动学降级判定、003 反馈 kFlagEncoderValid 置位）必须共用本常量，
+// 不得各自内联 —— 否则质量语义会出现两份实现。
+// 注意：kQualityAccumulating（低速累加中）与 kQualityStallCandidate（停滞候选）**不在**掩码内：
+// 004 冻结契约明确前者不得因此丢弃测量、后者不得单独判为断线（004 result.md「007 输入面」）。
+inline constexpr uint32_t kQualityBlockingMask =
+    kQualityCountOutOfRange | kQualityTimestampInvalid | kQualityHardwareFault;
+
 struct WheelSideState {
   int32_t count_delta = 0;      // 本窗口有符号计数增量（已含方向极性）
   uint32_t dt_us = 0;           // 本窗口采样间隔（µs）

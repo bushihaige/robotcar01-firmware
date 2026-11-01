@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "app/chassis/chassis_types.h"
+#include "app/encoder/wheel_state.h"
 #include "app/mcu_os_lite/clock.h"
 #include "app/mcu_os_lite/task_descriptor.h"
 #include "app/protocol/byte_ring.h"
@@ -13,6 +14,7 @@
 #include "app/protocol/decoder.h"
 #include "app/protocol/feedback.h"
 #include "app/protocol/feedback_limiter.h"
+#include "app/protocol/motion_desired.h"
 
 namespace robotcar01::protocol {
 namespace {
@@ -194,6 +196,120 @@ TEST(FeedbackLimiterTest, PhaseAndFailureCounting) {
   EXPECT_TRUE(limiter.ShouldSendDiag(40'000));
   EXPECT_FALSE(limiter.ShouldSendDiag(100'000));
   EXPECT_TRUE(limiter.ShouldSendDiag(200'000));
+}
+
+// 005 A8：target_scale（域限幅比例）往返一致 + 无数据源时写 0（不得被读作"未限幅"）
+TEST(FeedbackTest, TargetScaleRoundTripAndMissingSourceSemantics) {
+  chassis::WheelTarget target{};
+  target.left_mps = 0.1f;
+  target.right_mps = 0.2f;
+  target.scale = 0.4f;
+  target.limit_reason = chassis::LimitReason::kQualityDegraded | chassis::LimitReason::kWheelSpeed;
+  target.valid = true;
+
+  FeedbackInputs inputs{};
+  inputs.target = &target;
+  const FeedbackStatusPayload payload = AssembleStatusPayload(inputs, 1'000);
+  EXPECT_NEAR(payload.target_scale, 0.4f, 1e-6f);
+  EXPECT_NE(payload.status_flags & kFlagTargetValid, 0u);
+  EXPECT_EQ(payload.limit_reason, static_cast<uint32_t>(target.limit_reason));
+
+  uint8_t frame[256] = {};
+  const size_t size = EncodeStatusFrame(payload, 9, frame, sizeof(frame));
+  ASSERT_EQ(size, kFrameHeaderBytes + kStatusPayloadBytes + kCrcBytes);
+  StreamDecoder decoder;
+  decoder.Init();
+  FeedbackStatusPayload decoded{};
+  bool ok = false;
+  for (size_t i = 0; i < size; ++i) {
+    if (decoder.ConsumeByte(frame[i]) == DecodeStatus::kFrameReady) {
+      ok = DecodeStatusPayload(decoder.last_frame(), decoded);
+    }
+  }
+  ASSERT_TRUE(ok);
+  EXPECT_NEAR(decoded.target_scale, 0.4f, 1e-6f);
+  EXPECT_NEAR(decoded.target_left_mps, 0.1f, 1e-6f);
+  EXPECT_NEAR(decoded.target_right_mps, 0.2f, 1e-6f);
+
+  // 无 target 数据源：清位 + scale 写 0（而不是结构体默认的 1.0）
+  const FeedbackInputs empty{};
+  const FeedbackStatusPayload missing = AssembleStatusPayload(empty, 1'000);
+  EXPECT_EQ(missing.status_flags & kFlagTargetValid, 0u);
+  EXPECT_NEAR(missing.target_scale, 0.0f, 1e-6f);
+  EXPECT_NEAR(missing.target_left_mps, 0.0f, 1e-6f);
+}
+
+// 005：逐侧编码器质量位直达状态帧（004 详设的指派，005 落地补齐）
+TEST(FeedbackTest, EncoderQualityFieldsPerSide) {
+  encoder::WheelState wheel{};
+  wheel.left.quality = encoder::kQualityStallCandidate;
+  wheel.right.quality = encoder::kQualityCountOutOfRange;
+  wheel.left.valid = true;
+  wheel.right.valid = false;
+
+  FeedbackInputs inputs{};
+  inputs.wheel_state = &wheel;
+  const FeedbackStatusPayload payload = AssembleStatusPayload(inputs, 1'000);
+  EXPECT_EQ(payload.encoder_quality_left, encoder::kQualityStallCandidate);
+  EXPECT_EQ(payload.encoder_quality_right, encoder::kQualityCountOutOfRange);
+  // 阻塞位存在 ⇒ kFlagEncoderValid 必须清位（004 逐位置位表不变）
+  EXPECT_EQ(payload.status_flags & kFlagEncoderValid, 0u);
+
+  uint8_t frame[256] = {};
+  const size_t size = EncodeStatusFrame(payload, 11, frame, sizeof(frame));
+  ASSERT_EQ(size, kFrameHeaderBytes + kStatusPayloadBytes + kCrcBytes);
+  StreamDecoder decoder;
+  decoder.Init();
+  FeedbackStatusPayload decoded{};
+  bool ok = false;
+  for (size_t i = 0; i < size; ++i) {
+    if (decoder.ConsumeByte(frame[i]) == DecodeStatus::kFrameReady) {
+      ok = DecodeStatusPayload(decoder.last_frame(), decoded);
+    }
+  }
+  ASSERT_TRUE(ok);
+  EXPECT_EQ(decoded.encoder_quality_left, encoder::kQualityStallCandidate);
+  EXPECT_EQ(decoded.encoder_quality_right, encoder::kQualityCountOutOfRange);
+
+  // 无数据源时两侧质量位写 0
+  const FeedbackInputs empty{};
+  const FeedbackStatusPayload missing = AssembleStatusPayload(empty, 1'000);
+  EXPECT_EQ(missing.encoder_quality_left, 0u);
+  EXPECT_EQ(missing.encoder_quality_right, 0u);
+}
+
+// 005 A6 前置：motion_desired 唯一构造式（004 D-004-8）的各分支
+TEST(MotionDesiredTest, ConstructionRuleBranches) {
+  const chassis::SafetyStatus allowed{true};
+  const chassis::SafetyStatus blocked{false};
+  CommandSnapshot snapshot{};
+  snapshot.command.valid = true;
+  snapshot.has_command = true;
+  snapshot.armed = true;
+  snapshot.run_requested = true;
+  snapshot.received_at_us = 1'000'000;
+  snapshot.valid_until_us = 1'300'000;
+
+  EXPECT_TRUE(MakeMotionDesired(snapshot, 1'100'000, allowed));
+  EXPECT_FALSE(MakeMotionDesired(snapshot, 1'100'000, blocked));   // 安全禁止
+  EXPECT_FALSE(MakeMotionDesired(snapshot, 1'400'000, allowed));   // 租约过期
+  EXPECT_TRUE(MakeMotionDesired(snapshot, 1'300'000, allowed));    // 租约边界（<= 有效）
+
+  CommandSnapshot not_armed = snapshot;
+  not_armed.armed = false;
+  EXPECT_FALSE(MakeMotionDesired(not_armed, 1'100'000, allowed));
+
+  CommandSnapshot not_running = snapshot;
+  not_running.run_requested = false;
+  EXPECT_FALSE(MakeMotionDesired(not_running, 1'100'000, allowed));
+
+  CommandSnapshot stopped = snapshot;
+  stopped.stop_requested = true;
+  EXPECT_FALSE(MakeMotionDesired(stopped, 1'100'000, allowed));
+
+  CommandSnapshot no_command = snapshot;
+  no_command.has_command = false;
+  EXPECT_FALSE(MakeMotionDesired(no_command, 1'100'000, allowed));
 }
 
 }  // namespace
