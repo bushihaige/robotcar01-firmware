@@ -18,6 +18,11 @@ set -euo pipefail
 FW_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WS_ROOT="$(cd "$FW_DIR/.." && pwd)"
 REMOTE_PY="$WS_ROOT/.agents/skills/honor-ssh-access/scripts/remote.py"
+HOST="${HONOR_HOST:-192.168.1.19}"   # 2026-10-25 实测地址（旧记录 192.168.1.3 已失效），可用 HONOR_HOST 覆盖
+remote_ps() { python3 "$REMOTE_PY" --host "$HOST" ps "$1"; }
+remote_put() { python3 "$REMOTE_PY" --host "$HOST" put "$1" "$2"; }
+remote_get() { python3 "$REMOTE_PY" --host "$HOST" get "$1" "$2"; }
+
 
 REMOTE_HEX='E:\File\robotcar01_bringup\src\build\fw\robotcar01_fw.hex'
 LOCAL_HEX=""
@@ -41,15 +46,15 @@ if [ -n "$LOCAL_HEX" ]; then
   TARGET="E:\\File\\robotcar01_bringup\\robotcar01_fw_${STAMP}.hex"
   LOCAL_SHA="$(shasum -a 256 "$LOCAL_HEX" | cut -d' ' -f1)"
   echo "== 上传本地 hex（sha256 ${LOCAL_SHA}） =="
-  python3 "$REMOTE_PY" put "$LOCAL_HEX" "E:/File/robotcar01_bringup/robotcar01_fw_${STAMP}.hex"
-  REMOTE_SHA="$(python3 "$REMOTE_PY" ps "(Get-FileHash -Algorithm SHA256 '${TARGET}').Hash.ToLower()" | tr -d '\r' | tail -1)"
+  remote_put "$LOCAL_HEX" "E:/File/robotcar01_bringup/robotcar01_fw_${STAMP}.hex"
+  REMOTE_SHA="$(remote_ps "(Get-FileHash -Algorithm SHA256 '${TARGET}').Hash.ToLower()" | tr -d '\r' | tail -1)"
   [ "$REMOTE_SHA" = "$LOCAL_SHA" ] || { echo "ERROR: sha256 不一致，停止烧录" >&2; exit 3; }
   REMOTE_HEX="$TARGET"
 fi
 
 echo "== 远端 hex: ${REMOTE_HEX} =="
 echo "== 板卡信息（写入证据） =="
-python3 "$REMOTE_PY" ps "& '${PROGRAMMER}' -c port=SWD mode=UR reset=HWrst freq=4000 | Select-String -Pattern 'Device ID|Flash size|Voltage|ST-LINK SN|Firmware version'"
+remote_ps "& '${PROGRAMMER}' -c port=SWD mode=UR reset=HWrst freq=4000 | Select-String -Pattern 'Device ID|Flash size|Voltage|ST-LINK SN|Firmware version'"
 
 if [ "$DRY_RUN" = "1" ]; then
   echo "(dry-run: 不写入)"
@@ -57,4 +62,4 @@ if [ "$DRY_RUN" = "1" ]; then
 fi
 
 echo "== ST-Link 写入 + 校验 + 复位 =="
-python3 "$REMOTE_PY" ps "& '${PROGRAMMER}' -c port=SWD mode=UR reset=HWrst freq=4000 -w '${REMOTE_HEX}' -v -rst; exit \$LASTEXITCODE"
+remote_ps "& '${PROGRAMMER}' -c port=SWD mode=UR reset=HWrst freq=4000 -w '${REMOTE_HEX}' -v -rst; exit \$LASTEXITCODE"

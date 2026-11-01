@@ -9,7 +9,7 @@
 
 | 组件 | 来源仓库 | 锚定 commit | 许可证 | 说明 |
 |---|---|---|---|---|
-| `stm32f4-hal/` | `STMicroelectronics/stm32f4xx-hal-driver` | `1f6451c3e07728b4c830744de380e56bf5bc0026` | **BSD-3-Clause**（见 `stm32f4-hal/LICENSE.md`） | STM32F4 HAL 驱动源与头（含 `stm32f4xx_hal_conf_template.h` 作为参考模板） |
+| `stm32f4-hal/` | `STMicroelectronics/stm32f4xx-hal-driver` | `1f6451c3e07728b4c830744de380e56bf5bc0026` | **BSD-3-Clause**（见 `stm32f4-hal/LICENSE.md`） | STM32F4 HAL 驱动源与头（含 `stm32f4xx_hal_conf_template.h` 作为参考模板）。**Iteration 006.5 追加** `stm32f4xx_hal_tim{,_ex}.{c,h}`：取自 Honor PC 上的 `STM32Cube_FW_F4_V1.28.3/Drivers/STM32F4xx_HAL_Driver`，已用 `stm32f4xx_hal.c` 的 sha256 与本地锚定版本逐字节比对一致（`97e715cd…`），确认与上述 commit 同源 |
 | `cmsis-device-f4/` | `STMicroelectronics/cmsis-device-f4` | `a833f4af71410f25b01468f976560d7ff63a2fc9` | **Apache-2.0**（见 `cmsis-device-f4/LICENSE.md`） | 器件头 `stm32f4xx.h`/`stm32f407xx.h`、`system_stm32f4xx.c`、`startup_stm32f407xx.s` |
 | `cmsis-core/` | `ARM-software/CMSIS_5`（`CMSIS/Core/Include`） | `55b19837f5703e418ca37894d5745b1dc05e4c91` | **Apache-2.0**（见 `cmsis-core/LICENSE.txt`） | Cortex-M 核心头 `core_cm4.h`、`cmsis_gcc.h` 等 |
 
@@ -68,6 +68,8 @@ curl -sSLf "https://raw.githubusercontent.com/STMicroelectronics/stm32f4xx-hal-d
 | `stm32f4-hal/Inc/stm32f4xx_hal_pwr_ex.h` | `1794b88c5e080858c0205a2e94340c0250ac9171b3a3f01cad6d050005a1b09d` |
 | `stm32f4-hal/Inc/stm32f4xx_hal_rcc.h` | `eb6911d964b1cf8a83993b19c8feb9845e8793d7c0e5d643390b53207c8b078e` |
 | `stm32f4-hal/Inc/stm32f4xx_hal_rcc_ex.h` | `49f0c8068524e1de248738530cff3bbe630dc4784b6e8b5568fbc7e1a154f772` |
+| `stm32f4-hal/Inc/stm32f4xx_hal_tim.h` | `63f00354e2a5e8d3a8d211fc736517273e12b99a1eb782aa7a2670cb1264a16d` |
+| `stm32f4-hal/Inc/stm32f4xx_hal_tim_ex.h` | `aa6695d64677e8a7b46d719da3d81049290f42383c17e76271605bc68143fd1e` |
 | `stm32f4-hal/Inc/stm32f4xx_hal_uart.h` | `42528bc9caa6e2fe96b7e6d7b3fcdf35d8d85ae38d33195a233e18a072f157a1` |
 | `stm32f4-hal/LICENSE.md` | `376c82bcef0be563bf59b93d05cfdd4b6295e4660b55b31dd8a883bf1d6637f7` |
 | `stm32f4-hal/Src/stm32f4xx_hal.c` | `97e715cda2a34bd564b59ce4ba9b16bd29651f8f229161105aaec666d76ea91a` |
@@ -83,4 +85,6 @@ curl -sSLf "https://raw.githubusercontent.com/STMicroelectronics/stm32f4xx-hal-d
 | `stm32f4-hal/Src/stm32f4xx_hal_pwr_ex.c` | `4409dddc0d2019f918d0ddebecf659f06d4de3f9aa28566621a16ea47203331f` |
 | `stm32f4-hal/Src/stm32f4xx_hal_rcc.c` | `f3ac468e2f415adb74281107c0dec1448008950b64a7bb11c14cbe3ee1a936de` |
 | `stm32f4-hal/Src/stm32f4xx_hal_rcc_ex.c` | `526324811fa113c3eadfa84cd24ea5e607ad8e8bf003a2085456c04b734ca25e` |
+| `stm32f4-hal/Src/stm32f4xx_hal_tim.c` | `a7dea3b10a771a380915007b9ece123654c6bd2a40f611102220df9bfdd143e4` |
+| `stm32f4-hal/Src/stm32f4xx_hal_tim_ex.c` | `4471b582d56545fbd48725401249b4a2a728ccc0d933b3f1a02e2b09dda8d8fa` |
 | `stm32f4-hal/Src/stm32f4xx_hal_uart.c` | `a74ed3a9a13a4fcbaada9e6f88f7d4fcabe2a75852a6ce4c09f8d4314a2e851a` |

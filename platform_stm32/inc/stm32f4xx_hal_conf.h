@@ -22,6 +22,8 @@ extern "C" {
 #define HAL_DMA_MODULE_ENABLED
 #define HAL_FLASH_MODULE_ENABLED
 #define HAL_EXTI_MODULE_ENABLED
+// Iteration 006.5：TIM 编码器模式（TIM2/TIM3）+ PWM 输出（TIM4）
+#define HAL_TIM_MODULE_ENABLED
 
 // ---------- 振荡器与电源参数 ----------
 #if !defined(HSE_VALUE)
@@ -88,6 +90,9 @@ extern "C" {
 #endif
 #ifdef HAL_UART_MODULE_ENABLED
 #include "stm32f4xx_hal_uart.h"
+#endif
+#ifdef HAL_TIM_MODULE_ENABLED
+#include "stm32f4xx_hal_tim.h"
 #endif
 
 // ---------- 断言：bring-up 期开启（B-2.5-7） ----------
